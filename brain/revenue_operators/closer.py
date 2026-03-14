@@ -160,6 +160,12 @@ class CloserOperator:
                 link = None
 
             message = _build_payment_link_message(lead, link)
+            try:
+                from brain.humanizer import humanize_text
+
+                message = humanize_text(message, channel="whatsapp")
+            except Exception as exc:
+                logger.debug("closer: humanizer skipped for payment link: %s", exc)
 
             if lead.phone and link:
                 try:
@@ -188,6 +194,12 @@ class CloserOperator:
                 event_id, scheduled_at = None, None
 
             message = _build_demo_message(lead, scheduled_at)
+            try:
+                from brain.humanizer import humanize_text
+
+                message = humanize_text(message, channel="whatsapp")
+            except Exception as exc:
+                logger.debug("closer: humanizer skipped for demo: %s", exc)
 
             return CloserAction(
                 lead_id=lead.lead_id,
