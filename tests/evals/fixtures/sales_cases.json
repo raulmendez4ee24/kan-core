@@ -1,0 +1,155 @@
+[
+  {
+    "case_id": "eval_sales_001",
+    "scenario": "Outreach frío - prospecto sin contacto previo",
+    "input": {
+      "organization_id": "test_sales_001",
+      "objective": "iniciar outreach a prospecto frío con secuencia automática",
+      "context": {
+        "cliente_tipo": "b2b",
+        "prospecto": "empresa_mediana_manufactura",
+        "canal": "email",
+        "info_disponible": ["nombre", "empresa", "cargo", "linkedin"],
+        "producto_a_vender": "agente_autonomo_operaciones",
+        "dolor_identificado": "mucho_trabajo_manual_en_cobranza",
+        "pasos_secuencia": 3,
+        "intervalo_dias": 2
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "waiting"],
+      "acciones_esperadas": ["enviar_email_personalizado", "programar_seguimiento"],
+      "no_debe_hacer": ["enviar_template_generico", "enviar_todos_a_la_vez"],
+      "debe_escalar": false,
+      "razon_exito": "email personalizado con dolor identificado y seguimiento programado"
+    }
+  },
+  {
+    "case_id": "eval_sales_002",
+    "scenario": "Seguimiento pipeline - prospecto vio propuesta hace 3 días sin respuesta",
+    "input": {
+      "organization_id": "test_sales_002",
+      "objective": "hacer seguimiento a prospecto que recibió propuesta sin responder",
+      "context": {
+        "cliente_tipo": "b2b",
+        "etapa_pipeline": "propuesta_enviada",
+        "dias_sin_respuesta": 3,
+        "valor_deal": 25000,
+        "canal_preferido": "whatsapp",
+        "ultimo_contacto": "envio_propuesta",
+        "temperatura_lead": "caliente"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "waiting"],
+      "acciones_esperadas": ["enviar_followup_whatsapp", "registrar_intento_contacto"],
+      "no_debe_hacer": ["esperar_mas_de_5_dias", "enviar_otra_propuesta"],
+      "debe_escalar": false,
+      "razon_exito": "followup rápido por canal preferido sin presionar demasiado"
+    }
+  },
+  {
+    "case_id": "eval_sales_003",
+    "scenario": "Pre-calificación - lead entrante desde formulario web",
+    "input": {
+      "organization_id": "test_sales_003",
+      "objective": "pre-calificar lead nuevo y asignar score de prioridad",
+      "context": {
+        "cliente_tipo": "saas",
+        "origen_lead": "formulario_web",
+        "info_inicial": {
+          "nombre": "Carlos Mendoza",
+          "empresa": "Distribuidora Regional SA",
+          "empleados": 45,
+          "mensaje": "quiero automatizar mi área de ventas"
+        },
+        "preguntas_calificacion": ["presupuesto", "urgencia", "decision_maker"],
+        "canal_respuesta": "whatsapp"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "waiting"],
+      "acciones_esperadas": ["enviar_preguntas_calificacion", "asignar_lead_score"],
+      "no_debe_hacer": ["enviar_propuesta_sin_calificar", "ignorar_lead"],
+      "debe_escalar": false,
+      "razon_exito": "calificación iniciada con preguntas correctas antes de propuesta"
+    }
+  },
+  {
+    "case_id": "eval_sales_004",
+    "scenario": "Cierre asistido - deal en fase final sin firma",
+    "input": {
+      "organization_id": "test_sales_004",
+      "objective": "asistir cierre de deal con recordatorio de firma y pago",
+      "context": {
+        "cliente_tipo": "b2b",
+        "etapa_pipeline": "cierre",
+        "propuesta_aceptada_verbalmente": true,
+        "contrato_enviado": true,
+        "dias_sin_firma": 4,
+        "valor_deal": 45000,
+        "decision_maker": "director_general",
+        "bloqueador_conocido": "espera_aprobacion_finanzas"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "waiting"],
+      "acciones_esperadas": ["recordatorio_firma", "ofrecer_ayuda_proceso_aprobacion"],
+      "no_debe_hacer": ["presionar_agresivamente", "bajar_precio_sin_razon"],
+      "debe_escalar": false,
+      "razon_exito": "recordatorio amable con oferta de ayuda para desbloquear aprobación"
+    }
+  },
+  {
+    "case_id": "eval_sales_005_replan",
+    "scenario": "Seguimiento pipeline - prospecto no responde por ningún canal",
+    "input": {
+      "organization_id": "test_sales_005",
+      "objective": "reactivar prospecto que no responde email ni WhatsApp",
+      "context": {
+        "cliente_tipo": "b2b",
+        "etapa_pipeline": "contacto_inicial",
+        "intentos_email": 3,
+        "intentos_whatsapp": 2,
+        "dias_sin_respuesta": 15,
+        "valor_deal_estimado": 18000,
+        "otros_canales_disponibles": ["linkedin", "llamada"]
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "completed", "escalated"],
+      "acciones_esperadas": ["intentar_linkedin", "programar_llamada"],
+      "no_debe_hacer": ["seguir_enviando_email", "cerrar_sin_intentar_otros_canales"],
+      "debe_escalar": false,
+      "razon_exito": "replan cambia canal después de múltiples intentos fallidos"
+    },
+    "eval_force_risk_score": 0.75,
+    "eval_force_replan": true
+  },
+  {
+    "case_id": "eval_sales_006_compensation",
+    "scenario": "Propuesta enviada con precio incorrecto - compensación requerida",
+    "input": {
+      "organization_id": "test_sales_006",
+      "objective": "compensar envío de propuesta con precio desactualizado",
+      "context": {
+        "cliente_tipo": "b2b",
+        "error": "propuesta_con_precio_anterior_sin_descuento",
+        "valor_incorrecto": 30000,
+        "valor_correcto": 25000,
+        "cliente_ya_vio_propuesta": true,
+        "tiempo_desde_envio_horas": 3,
+        "accion_correctiva": "enviar_propuesta_corregida_con_disculpa"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "escalated"],
+      "acciones_esperadas": ["enviar_propuesta_corregida", "disculpa_personalizada"],
+      "no_debe_hacer": ["ignorar_error", "esperar_que_el_cliente_pregunte"],
+      "debe_escalar": true,
+      "razon_exito": "corrección proactiva antes de que el cliente reclame"
+    },
+    "eval_force_risk_score": 0.8,
+    "eval_force_compensation": true
+  }
+]

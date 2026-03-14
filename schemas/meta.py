@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MetaMessage(BaseModel):
@@ -11,8 +11,7 @@ class MetaMessage(BaseModel):
     audio: Optional[Dict[str, Any]] = None
     location: Optional[Dict[str, Any]] = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class MetaMessaging(BaseModel):
@@ -21,16 +20,14 @@ class MetaMessaging(BaseModel):
     timestamp: Optional[int] = None
     message: Optional[MetaMessage] = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class MetaChange(BaseModel):
     field: Optional[str] = None
     value: Dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class MetaEntry(BaseModel):
@@ -39,13 +36,11 @@ class MetaEntry(BaseModel):
     changes: Optional[List[MetaChange]] = None
     messaging: Optional[List[MetaMessaging]] = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class MetaWebhook(BaseModel):
     object: Optional[str] = None
     entry: List[MetaEntry] = Field(default_factory=list)
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")

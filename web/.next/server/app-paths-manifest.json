@@ -1,0 +1,6 @@
+{
+  "/api/n8n/autopilot/route": "app/api/n8n/autopilot/route.js",
+  "/page": "app/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/login/page": "app/login/page.js"
+}

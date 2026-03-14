@@ -1,0 +1,19 @@
+<svg width="1200" height="1400" viewBox="0 0 1200 1400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g1" x1="120" y1="80" x2="1000" y2="1320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F6F3EE"/>
+      <stop offset="1" stop-color="#DAD3C8"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="550" y1="340" x2="640" y2="1070" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#252B34"/>
+      <stop offset="1" stop-color="#0F1319"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="1400" fill="url(#g1)"/>
+  <ellipse cx="600" cy="1220" rx="270" ry="90" fill="#313946" fill-opacity="0.18"/>
+  <rect x="465" y="300" width="270" height="520" rx="130" fill="url(#g2)"/>
+  <rect x="530" y="410" width="140" height="30" rx="14" fill="#6E91B6"/>
+  <rect x="522" y="840" width="156" height="220" rx="78" fill="#1A2029"/>
+  <rect x="435" y="900" width="64" height="190" rx="32" fill="#1A2029"/>
+  <rect x="701" y="900" width="64" height="190" rx="32" fill="#1A2029"/>
+</svg>

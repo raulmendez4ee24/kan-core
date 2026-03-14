@@ -1,0 +1,24 @@
+Metadata-Version: 2.4
+Name: kan-core
+Version: 0.1.0
+Summary: K'an core runtime
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+
+# K'an Core
+
+## Tests
+
+Run the test suite from repo root:
+
+```bash
+pytest -q
+```
+
+## Packaging (editable install)
+
+Install in editable mode so imports like `brain.*` work as a package:
+
+```bash
+pip install -e .
+```

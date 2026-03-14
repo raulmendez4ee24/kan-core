@@ -1,0 +1,151 @@
+[
+  {
+    "case_id": "eval_marketing_001",
+    "scenario": "Reactivación - clínica dental con pacientes inactivos 6 meses",
+    "input": {
+      "organization_id": "test_mkt_001",
+      "objective": "reactivar pacientes inactivos con campaña WhatsApp + email",
+      "context": {
+        "cliente_tipo": "clinica_dental",
+        "segmento": "pacientes_inactivos",
+        "meses_sin_visita": 6,
+        "total_contactos": 120,
+        "canal_preferido": "whatsapp",
+        "oferta": "limpieza_dental_descuento_20",
+        "urgencia": "media",
+        "historial_campanas_previas": "ninguna"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "waiting"],
+      "acciones_esperadas": ["enviar_whatsapp_reactivacion", "enviar_email_oferta"],
+      "no_debe_hacer": ["enviar_a_todos_sin_segmentar", "enviar_sin_personalizacion"],
+      "debe_escalar": false,
+      "razon_exito": "campaña segmentada con oferta específica para pacientes inactivos"
+    }
+  },
+  {
+    "case_id": "eval_marketing_002",
+    "scenario": "Promoción mensual - barbería con WhatsApp broadcast",
+    "input": {
+      "organization_id": "test_mkt_002",
+      "objective": "enviar promoción mensual de corte + barba a toda la base",
+      "context": {
+        "cliente_tipo": "barberia",
+        "tipo_campana": "promocion_mensual",
+        "total_contactos": 85,
+        "canal": "whatsapp_broadcast",
+        "oferta": "corte_barba_combo_precio_especial",
+        "vigencia_oferta_dias": 7,
+        "mejor_horario_envio": "viernes_tarde"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "waiting"],
+      "acciones_esperadas": ["programar_broadcast_whatsapp", "configurar_seguimiento_no_abre"],
+      "no_debe_hacer": ["enviar_fuera_de_horario", "enviar_sin_fecha_vigencia"],
+      "debe_escalar": false,
+      "razon_exito": "broadcast programado en horario óptimo con seguimiento automático"
+    }
+  },
+  {
+    "case_id": "eval_marketing_003",
+    "scenario": "Nurturing - empresa mediana con prospectos fríos en lista",
+    "input": {
+      "organization_id": "test_mkt_003",
+      "objective": "activar secuencia de nurturing para lista de prospectos fríos",
+      "context": {
+        "cliente_tipo": "empresa_mediana",
+        "tipo_campana": "nurturing",
+        "total_prospectos": 45,
+        "canal": "email",
+        "pasos_secuencia": 4,
+        "contenido_disponible": ["caso_exito", "demo_video", "testimonio", "propuesta"],
+        "objetivo_final": "agendar_demo",
+        "intervalo_dias": 3
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "waiting"],
+      "acciones_esperadas": ["crear_secuencia_email", "programar_primer_envio"],
+      "no_debe_hacer": ["enviar_todos_los_correos_mismo_dia", "ignorar_intervalo"],
+      "debe_escalar": false,
+      "razon_exito": "secuencia configurada con intervalos correctos y CTA a demo"
+    }
+  },
+  {
+    "case_id": "eval_marketing_004",
+    "scenario": "Recuperación no-show - clínica con citas perdidas esta semana",
+    "input": {
+      "organization_id": "test_mkt_004",
+      "objective": "recuperar pacientes que no se presentaron a su cita",
+      "context": {
+        "cliente_tipo": "clinica",
+        "tipo_campana": "recuperacion_noshow",
+        "no_shows_semana": 8,
+        "canal": "whatsapp",
+        "tiempo_desde_noshow_horas": 2,
+        "disponibilidad_reagendado": "esta_semana",
+        "tono": "empático_no_agresivo"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "waiting"],
+      "acciones_esperadas": ["enviar_whatsapp_noshow", "ofrecer_reagendado"],
+      "no_debe_hacer": ["tono_agresivo", "esperar_mas_de_24h"],
+      "debe_escalar": false,
+      "razon_exito": "contacto empático rápido con opción de reagendado inmediato"
+    }
+  },
+  {
+    "case_id": "eval_marketing_005_replan",
+    "scenario": "Campaña evergreen - bienvenida automática falla en envío",
+    "input": {
+      "organization_id": "test_mkt_005",
+      "objective": "activar flujo de bienvenida para nuevo cliente registrado",
+      "context": {
+        "cliente_tipo": "negocio_local",
+        "tipo_campana": "evergreen_bienvenida",
+        "canal": "email",
+        "email_cliente": "nuevo@cliente.com",
+        "trigger": "registro_nuevo",
+        "fallo_previo": "error_smtp",
+        "intentos": 2
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "completed", "escalated"],
+      "acciones_esperadas": ["reintentar_envio", "cambiar_canal_whatsapp"],
+      "no_debe_hacer": ["abandonar_sin_reintento"],
+      "debe_escalar": false,
+      "razon_exito": "replan detecta fallo de canal y cambia a WhatsApp"
+    },
+    "eval_force_risk_score": 0.75,
+    "eval_force_replan": true
+  },
+  {
+    "case_id": "eval_marketing_006_compensation",
+    "scenario": "Campaña enviada a segmento incorrecto - compensación requerida",
+    "input": {
+      "organization_id": "test_mkt_006",
+      "objective": "compensar envío incorrecto de campaña a segmento equivocado",
+      "context": {
+        "cliente_tipo": "clinica_dental",
+        "tipo_campana": "compensacion",
+        "error": "campana_enviada_a_todos_en_vez_de_inactivos",
+        "contactos_afectados": 200,
+        "campana_original": "oferta_reactivacion",
+        "accion_correctiva": "enviar_disculpa_y_clarificacion"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "escalated"],
+      "acciones_esperadas": ["enviar_mensaje_aclaracion", "registrar_incidente"],
+      "no_debe_hacer": ["ignorar_error", "enviar_otra_campana_encima"],
+      "debe_escalar": false,
+      "razon_exito": "compensación rápida con mensaje de aclaración al segmento afectado"
+    },
+    "eval_force_risk_score": 0.8,
+    "eval_force_compensation": true
+  }
+]

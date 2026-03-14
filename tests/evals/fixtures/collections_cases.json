@@ -1,0 +1,134 @@
+[
+  {
+    "case_id": "eval_collections_001",
+    "scenario": "SaaS - cuenta en collections por deuda acumulada",
+    "input": {
+      "organization_id": "test_saas_003",
+      "objective": "recuperar deuda acumulada de cuenta SaaS",
+      "context": {
+        "cliente_tipo": "saas",
+        "deuda_total": 3600,
+        "meses_sin_pagar": 3,
+        "plan_activo": false,
+        "acceso_suspendido": true,
+        "datos_cliente": "completos",
+        "ultima_actividad": "hace_3_meses",
+        "intento_contacto_previo": "email_sin_respuesta"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "completed"],
+      "acciones_esperadas": ["oferta_plan_pago", "contacto_multicanal"],
+      "no_debe_hacer": ["borrar_datos_sin_aviso", "ignorar_caso"],
+      "debe_escalar": false,
+      "razon_exito": "ofrecer plan de pago antes de escalar aumenta recuperacion"
+    }
+  },
+  {
+    "case_id": "eval_collections_002",
+    "scenario": "B2B - cliente con multiples facturas en collections",
+    "input": {
+      "organization_id": "test_b2b_003",
+      "objective": "negociar acuerdo de pago para deuda B2B total",
+      "context": {
+        "cliente_tipo": "b2b",
+        "facturas_pendientes": 4,
+        "deuda_total": 92000,
+        "dias_promedio_vencimiento": 75,
+        "contactos_realizados": 6,
+        "ultima_respuesta": "pide_descuento_40_porciento",
+        "situacion_empresa_cliente": "dificultades_financieras_conocidas"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "escalated"],
+      "acciones_esperadas": ["evaluar_descuento_parcial", "proponer_plan_pagos", "documentar_acuerdo"],
+      "no_debe_hacer": ["aceptar_descuento_sin_aprobacion", "cerrar_sin_acuerdo_escrito"],
+      "debe_escalar": true,
+      "razon_exito": "monto alto requiere aprobacion humana para descuento"
+    }
+  },
+  {
+    "case_id": "eval_collections_003",
+    "scenario": "SaaS - churn con deuda pequena, cliente frustrado",
+    "input": {
+      "organization_id": "test_saas_004",
+      "objective": "recuperar cliente y deuda simultaneamente",
+      "context": {
+        "cliente_tipo": "saas",
+        "deuda": 600,
+        "razon_churn": "insatisfaccion_producto",
+        "nps_historico": 4,
+        "plan_anterior": "pro",
+        "tiempo_como_cliente": "8_meses",
+        "feedback_dado": "faltaban_features_prometidas"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "completed"],
+      "acciones_esperadas": ["contacto_empatico", "oferta_retencion", "negociar_deuda"],
+      "no_debe_hacer": ["exigir_pago_sin_escuchar", "ignorar_razon_churn"],
+      "debe_escalar": false,
+      "razon_exito": "cliente recuperable si se atiende la queja primero"
+    }
+  },
+  {
+    "case_id": "eval_collections_004_replan",
+    "scenario": "B2B - cobranza de alto riesgo con multiples interlocutores y acuerdo caido",
+    "input": {
+      "organization_id": "test_b2b_003",
+      "objective": "replantear acuerdo de cobranza ante bloqueo contractual y riesgo de churn",
+      "context": {
+        "case_key": "eval_collections_004_replan",
+        "cliente_tipo": "b2b",
+        "deuda_total": 125000,
+        "dias_promedio_vencimiento": 96,
+        "stakeholders": ["finance", "legal", "ops"],
+        "high_impact_operation": true,
+        "eval_force_risk_score": 0.83,
+        "eval_force_replan": true
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "completed", "escalated"],
+      "acciones_esperadas": [],
+      "no_debe_hacer": [],
+      "debe_escalar": false,
+      "razon_exito": "caso de replan: waiting es valido mientras el agente replanifica"
+    }
+  },
+  {
+    "case_id": "eval_collections_005_compensation",
+    "scenario": "SaaS - cobranza agresiva previa requiere compensacion correctiva",
+    "input": {
+      "organization_id": "test_saas_004",
+      "objective": "reparar experiencia de cobranza y compensar por accion automatica incorrecta",
+      "context": {
+        "case_key": "eval_collections_005_compensation",
+        "cliente_tipo": "saas",
+        "deuda": 900,
+        "high_impact_operation": true,
+        "eval_force_risk_score": 0.88,
+        "eval_force_compensation": true,
+        "eval_seed_rollbackable": {
+          "operation_type": "delete",
+          "action_name": "delete_customer",
+          "restore_payload": {
+            "name": "Eval Collections Recovery",
+            "email": "collections-comp@example.com",
+            "phone": "+520000000002",
+            "status": "retained",
+            "external_id": "eval-collections-comp-001"
+          }
+        }
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "escalated"],
+      "acciones_esperadas": [],
+      "no_debe_hacer": [],
+      "debe_escalar": false,
+      "razon_exito": "caso de compensacion: debe cerrar con compensacion o escalar tras intentarlo"
+    }
+  }
+]

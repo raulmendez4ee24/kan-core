@@ -22,3 +22,12 @@ google-creds.json
 *-credentials.json
 *-service-account.json
 *_service_account.json
+
+# Node
+node_modules/
+
+# CSV data exports (generated at runtime)
+leads.csv
+leads_*.csv
+cold_email_*.csv
+hunter_results.csv

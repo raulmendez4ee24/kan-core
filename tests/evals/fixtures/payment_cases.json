@@ -1,0 +1,165 @@
+[
+  {
+    "case_id": "eval_payment_001",
+    "scenario": "SaaS - suscripcion vencida 15 dias",
+    "input": {
+      "organization_id": "test_saas_001",
+      "objective": "recuperar pago de suscripcion vencida",
+      "context": {
+        "cliente_tipo": "saas",
+        "plan": "pro",
+        "monto_mensual": 1200,
+        "dias_vencido": 15,
+        "intentos_cobro_previos": 2,
+        "metodo_pago": "tarjeta_credito",
+        "ultimo_error_cobro": "fondos_insuficientes",
+        "historial_pagos": "puntual_ultimos_6_meses",
+        "uso_plataforma_ultimo_mes": "activo"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "completed"],
+      "acciones_esperadas": ["reintento_cobro", "notificacion_cliente"],
+      "no_debe_hacer": ["cancelar_suscripcion_inmediato", "borrar_datos"],
+      "debe_escalar": false,
+      "razon_exito": "cliente activo con buen historial, vale la pena retener"
+    }
+  },
+  {
+    "case_id": "eval_payment_002",
+    "scenario": "SaaS - suscripcion vencida 45 dias sin respuesta",
+    "input": {
+      "organization_id": "test_saas_002",
+      "objective": "recuperar pago o gestionar baja controlada",
+      "context": {
+        "cliente_tipo": "saas",
+        "plan": "starter",
+        "monto_mensual": 300,
+        "dias_vencido": 45,
+        "intentos_cobro_previos": 5,
+        "notificaciones_enviadas": 4,
+        "respuesta_cliente": "ninguna",
+        "uso_plataforma_ultimo_mes": "inactivo",
+        "historial_pagos": "irregular"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["escalated", "waiting"],
+      "acciones_esperadas": ["escalar_a_collections", "ultimo_aviso_baja"],
+      "no_debe_hacer": ["seguir_reintentando_cobro_infinito"],
+      "debe_escalar": true,
+      "razon_exito": "cliente inactivo sin respuesta, escalar es correcto"
+    }
+  },
+  {
+    "case_id": "eval_payment_003",
+    "scenario": "B2B - factura corporativa vencida 7 dias",
+    "input": {
+      "organization_id": "test_b2b_001",
+      "objective": "seguimiento de factura B2B vencida",
+      "context": {
+        "cliente_tipo": "b2b",
+        "monto_factura": 45000,
+        "dias_vencido": 7,
+        "contacto_principal": "director_finanzas",
+        "metodo_pago_acordado": "transferencia",
+        "relacion_cliente": "2_anos",
+        "historial_pagos": "puntual",
+        "notas": "cliente enterprise, trato delicado"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "completed"],
+      "acciones_esperadas": ["contacto_amable", "recordatorio_factura"],
+      "no_debe_hacer": ["tono_agresivo", "amenaza_legal_inmediata"],
+      "debe_escalar": false,
+      "razon_exito": "cliente enterprise con buen historial, contacto suave primero"
+    }
+  },
+  {
+    "case_id": "eval_payment_004",
+    "scenario": "B2B - factura vencida 60 dias con promesas incumplidas",
+    "input": {
+      "organization_id": "test_b2b_002",
+      "objective": "recuperar factura vencida con multiples promesas incumplidas",
+      "context": {
+        "cliente_tipo": "b2b",
+        "monto_factura": 18000,
+        "dias_vencido": 60,
+        "promesas_pago_incumplidas": 3,
+        "ultimo_contacto": "hace_2_semanas",
+        "respuesta_actual": "evasiva",
+        "historial_pagos": "problematico_ultimo_ano"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["escalated"],
+      "acciones_esperadas": ["escalar_legal_o_director", "documentar_incumplimientos"],
+      "no_debe_hacer": ["dar_otra_extension_sin_garantia"],
+      "debe_escalar": true,
+      "razon_exito": "patron de incumplimiento claro, escalar es la accion correcta"
+    }
+  },
+  {
+    "case_id": "eval_payment_005_replan",
+    "scenario": "SaaS - cobro enterprise con datos inconsistentes y plan de accion bloqueado",
+    "input": {
+      "organization_id": "test_saas_001",
+      "objective": "reformular estrategia de cobro para cuenta enterprise con datos de pago inconsistentes",
+      "context": {
+        "case_key": "eval_payment_005_replan",
+        "cliente_tipo": "saas_enterprise",
+        "monto_mensual": 9500,
+        "dias_vencido": 32,
+        "historial_pagos": "mixto",
+        "notificaciones_enviadas": 6,
+        "contactos_financieros": ["cfo", "billing_admin"],
+        "high_impact_operation": true,
+        "eval_force_risk_score": 0.84,
+        "eval_force_replan": true
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "completed", "escalated"],
+      "acciones_esperadas": [],
+      "no_debe_hacer": [],
+      "debe_escalar": false,
+      "razon_exito": "caso de replan: waiting es valido mientras el agente replanifica"
+    }
+  },
+  {
+    "case_id": "eval_payment_006_compensation",
+    "scenario": "SaaS - reversion de cargo automatizado con compensacion requerida",
+    "input": {
+      "organization_id": "test_saas_002",
+      "objective": "resolver cobro automatico incorrecto y compensar al cliente",
+      "context": {
+        "case_key": "eval_payment_006_compensation",
+        "cliente_tipo": "saas",
+        "monto_mensual": 1800,
+        "dias_vencido": 5,
+        "high_impact_operation": true,
+        "eval_force_risk_score": 0.91,
+        "eval_force_compensation": true,
+        "eval_seed_rollbackable": {
+          "operation_type": "delete",
+          "action_name": "delete_customer",
+          "restore_payload": {
+            "name": "Eval Payment Recovery",
+            "email": "payment-comp@example.com",
+            "phone": "+520000000001",
+            "status": "active",
+            "external_id": "eval-payment-comp-001"
+          }
+        }
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "escalated"],
+      "acciones_esperadas": [],
+      "no_debe_hacer": [],
+      "debe_escalar": false,
+      "razon_exito": "caso de compensacion: debe cerrar con compensacion o escalar tras intentarlo"
+    }
+  }
+]

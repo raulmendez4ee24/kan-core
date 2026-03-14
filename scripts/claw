@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE_PATH="${BASH_SOURCE[0]}"
+while [[ -L "${SOURCE_PATH}" ]]; do
+  SOURCE_DIR="$(cd -P "$(dirname "${SOURCE_PATH}")" && pwd)"
+  SOURCE_PATH="$(readlink "${SOURCE_PATH}")"
+  [[ "${SOURCE_PATH}" != /* ]] && SOURCE_PATH="${SOURCE_DIR}/${SOURCE_PATH}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE_PATH}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.env"
+  set +a
+fi
+
+if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+  PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
+else
+  PYTHON_BIN="python3"
+fi
+
+if [[ "${1:-}" == "doctor" ]]; then
+  shift
+  exec "${PYTHON_BIN}" "${ROOT_DIR}/scripts/backend_doctor.py" "$@"
+fi
+
+if [[ "${1:-}" == "up" || "${1:-}" == "start" ]]; then
+  shift
+  exec "${ROOT_DIR}/scripts/full_auto_stack.sh" start "$@"
+fi
+
+if [[ "${1:-}" == "down" || "${1:-}" == "stop" ]]; then
+  shift
+  exec "${ROOT_DIR}/scripts/full_auto_stack.sh" stop "$@"
+fi
+
+if [[ "${1:-}" == "status" ]]; then
+  shift
+  exec "${ROOT_DIR}/scripts/full_auto_stack.sh" status "$@"
+fi
+
+if [[ "${1:-}" == "heal" ]]; then
+  shift
+  exec "${ROOT_DIR}/scripts/full_auto_stack.sh" heal "$@"
+fi
+
+if [[ "${1:-}" == "smoke" ]]; then
+  shift
+  exec "${ROOT_DIR}/scripts/full_auto_stack.sh" smoke "$@"
+fi
+
+if [[ "${1:-}" == "logs" ]]; then
+  shift
+  exec "${ROOT_DIR}/scripts/full_auto_stack.sh" logs "${1:-all}"
+fi
+
+if [[ "${1:-}" == "max-legal" ]]; then
+  shift
+  exec "${ROOT_DIR}/scripts/max_legal.sh" "${1:-start}"
+fi
+
+if [[ $# -eq 0 ]]; then
+  exec "${PYTHON_BIN}" "${ROOT_DIR}/scripts/run_autonomy.py" --personal
+fi
+
+exec "${PYTHON_BIN}" "${ROOT_DIR}/scripts/run_autonomy.py" "$@"

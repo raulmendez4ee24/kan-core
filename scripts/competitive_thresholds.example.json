@@ -1,0 +1,9 @@
+{
+  "task_success_rate_min": 0.92,
+  "recovery_success_rate_min": 0.70,
+  "p95_latency_seconds_max": 60.0,
+  "cost_per_run_usd_max": 0.02,
+  "session_survival_turns_min": 200.0,
+  "autonomy_reliability_index_min": 0.85,
+  "regression_rate_weekly_max": 0.03
+}

@@ -1,0 +1,201 @@
+{
+  "name": "Lead WhatsApp -> IA -> CRM -> Follow-up",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "lead-whatsapp-intake",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "responseData": {
+          "send": true,
+          "response": 200,
+          "responseBody": "{\"status\":\"accepted\",\"detail\":\"lead received\"}"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ],
+      "name": "Webhook Lead"
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "name",
+              "value": "={{ $json.name || '' }}"
+            },
+            {
+              "name": "phone",
+              "value": "={{ $json.phone || '' }}"
+            },
+            {
+              "name": "interest",
+              "value": "={{ $json.interest || '' }}"
+            },
+            {
+              "name": "source",
+              "value": "={{ $json.source || 'whatsapp' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        470,
+        300
+      ],
+      "name": "Normalize Lead"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.KAN_BASE_URL + '/chat/message' }}",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-Client-Id",
+              "value": "={{ $env.KAN_CLIENT_ID }}"
+            },
+            {
+              "name": "X-Client-Token",
+              "value": "={{ $env.KAN_CLIENT_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { session_id: 'lead:' + ($json.phone || 'unknown'), channel: 'n8n', message: 'Clasifica este lead y da prioridad (alta/media/baja): ' + JSON.stringify({ name: $json.name, phone: $json.phone, interest: $json.interest, source: $json.source }) } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        300
+      ],
+      "name": "IA Classifier"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRM_API_URL + '/contacts/upsert' }}",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.CRM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { name: $('Normalize Lead').item.json.name, phone: $('Normalize Lead').item.json.phone, interest: $('Normalize Lead').item.json.interest, source: $('Normalize Lead').item.json.source, ai_priority: $json.content || $json.message || 'media' } }}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        300
+      ],
+      "name": "CRM Upsert Contact"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_API_URL }}",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.WHATSAPP_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { to: $('Normalize Lead').item.json.phone, text: 'Gracias ' + $('Normalize Lead').item.json.name + '. Recibimos tu solicitud sobre ' + $('Normalize Lead').item.json.interest + '. Te contacto en breve con una propuesta.' } }}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1290,
+        300
+      ],
+      "name": "WhatsApp Follow-up"
+    }
+  ],
+  "connections": {
+    "Webhook Lead": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead": {
+      "main": [
+        [
+          {
+            "node": "IA Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA Classifier": {
+      "main": [
+        [
+          {
+            "node": "CRM Upsert Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Upsert Contact": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "staticData": null
+}
+

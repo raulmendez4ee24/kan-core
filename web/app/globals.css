@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 250 251 255;
+  --fg: 16 24 40;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-grotesk), ui-sans-serif, system-ui, -apple-system, Segoe UI,
+    sans-serif;
+  color: rgb(var(--fg));
+  background:
+    radial-gradient(1200px 500px at 20% 0%, rgba(95, 115, 194, 0.22), transparent 55%),
+    radial-gradient(900px 480px at 90% 20%, rgba(79, 162, 219, 0.18), transparent 60%),
+    linear-gradient(180deg, rgba(250, 251, 255, 1), rgba(245, 247, 251, 1));
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

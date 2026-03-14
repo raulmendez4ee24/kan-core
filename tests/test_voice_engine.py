@@ -1,0 +1,314 @@
+from __future__ import annotations
+
+import asyncio
+from typing import AsyncIterator
+
+import pytest
+
+from brain.voice_engine import CallResult, VoiceEngine
+
+
+# ---------------------------------------------------------------------------
+# Fake implementations — no real network calls
+# ---------------------------------------------------------------------------
+
+_FAKE_AUDIO = b"\xff\xfb\x90\x00" * 64  # minimal fake MP3 header bytes
+_FAKE_CALL_SID = "CA_fake_sid_001"
+_FAKE_TRANSCRIPT = "Estoy interesado pero necesito más información"
+
+
+async def _synth_ok(text: str) -> bytes:  # noqa: ARG001
+    return _FAKE_AUDIO
+
+
+async def _synth_fail(text: str) -> bytes:  # noqa: ARG001
+    raise RuntimeError("ElevenLabs unavailable")
+
+
+async def _dial_ok(to: str, twiml_url: str) -> dict:  # noqa: ARG001
+    return {"sid": _FAKE_CALL_SID, "status": "queued"}
+
+
+async def _update_ok(call_sid: str, twiml: str) -> dict:  # noqa: ARG001
+    return {"sid": call_sid, "status": "in-progress"}
+
+
+async def _transcribe_ok(audio: bytes) -> str:  # noqa: ARG001
+    return _FAKE_TRANSCRIPT
+
+
+def _engine(**overrides) -> VoiceEngine:
+    defaults = dict(
+        synth=_synth_ok,
+        dial=_dial_ok,
+        update=_update_ok,
+        transcribe=_transcribe_ok,
+    )
+    defaults.update(overrides)
+    return VoiceEngine(**defaults)
+
+
+async def _async_chunks(data: list[bytes]) -> AsyncIterator[bytes]:
+    for chunk in data:
+        yield chunk
+
+
+# ---------------------------------------------------------------------------
+# make_call
+# ---------------------------------------------------------------------------
+
+
+def test_make_call_returns_call_result(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+15005550006")
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://example.railway.app")
+
+    async def _run() -> None:
+        result = await _engine().make_call("+521234567890", "Hola, soy K'an.")
+        assert isinstance(result, CallResult)
+        assert result.call_sid == _FAKE_CALL_SID
+        assert result.status == "queued"
+        assert result.to_number == "+521234567890"
+        assert result.from_number == "+15005550006"
+        assert result.call_token  # non-empty token
+
+    asyncio.run(_run())
+
+
+def test_make_call_caches_audio_for_twiml_serving(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+15005550006")
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://example.railway.app")
+
+    async def _run() -> None:
+        eng = _engine()
+        result = await eng.make_call("+521234567890", "Test script")
+        cached = eng.get_audio(result.call_token)
+        assert cached == _FAKE_AUDIO
+
+    asyncio.run(_run())
+
+
+def test_make_call_twiml_url_contains_token(monkeypatch) -> None:
+    """The URL passed to Twilio must include the call token."""
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+15005550006")
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://example.railway.app")
+
+    dialed_urls: list[str] = []
+
+    async def _capture_dial(to: str, twiml_url: str) -> dict:
+        dialed_urls.append(twiml_url)
+        return {"sid": _FAKE_CALL_SID, "status": "queued"}
+
+    async def _run() -> None:
+        eng = _engine(dial=_capture_dial)
+        result = await eng.make_call("+521234567890", "Script")
+        assert len(dialed_urls) == 1
+        url = dialed_urls[0]
+        assert url.startswith("https://example.railway.app/voice/audio/")
+        assert result.call_token in url
+
+    asyncio.run(_run())
+
+
+def test_make_call_unique_tokens_per_call(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+1")
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://x.example")
+
+    async def _run() -> None:
+        eng = _engine()
+        r1 = await eng.make_call("+1", "A")
+        r2 = await eng.make_call("+1", "B")
+        assert r1.call_token != r2.call_token
+
+    asyncio.run(_run())
+
+
+def test_make_call_propagates_synth_error(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+1")
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://x.example")
+
+    async def _run() -> None:
+        eng = _engine(synth=_synth_fail)
+        with pytest.raises(RuntimeError, match="ElevenLabs"):
+            await eng.make_call("+1", "Script")
+
+    asyncio.run(_run())
+
+
+def test_make_call_dial_receives_to_number(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+1")
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://x.example")
+
+    called_with: list[str] = []
+
+    async def _capture(to: str, url: str) -> dict:
+        called_with.append(to)
+        return {"sid": "CA1", "status": "queued"}
+
+    async def _run() -> None:
+        await _engine(dial=_capture).make_call("+529991112233", "Hola")
+        assert called_with == ["+529991112233"]
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# transcribe_stream
+# ---------------------------------------------------------------------------
+
+
+def test_transcribe_stream_joins_chunks() -> None:
+    received: list[bytes] = []
+
+    async def _capture_transcribe(audio: bytes) -> str:
+        received.append(audio)
+        return _FAKE_TRANSCRIPT
+
+    async def _run() -> None:
+        eng = _engine(transcribe=_capture_transcribe)
+        chunks = [b"chunk1", b"chunk2", b"chunk3"]
+        result = await eng.transcribe_stream(_async_chunks(chunks))
+        assert result == _FAKE_TRANSCRIPT
+        assert len(received) == 1
+        assert received[0] == b"chunk1chunk2chunk3"
+
+    asyncio.run(_run())
+
+
+def test_transcribe_stream_returns_empty_for_no_audio() -> None:
+    async def _run() -> None:
+        eng = _engine()
+        result = await eng.transcribe_stream(_async_chunks([]))
+        assert result == ""
+
+    asyncio.run(_run())
+
+
+def test_transcribe_stream_skips_empty_chunks() -> None:
+    received: list[bytes] = []
+
+    async def _capture(audio: bytes) -> str:
+        received.append(audio)
+        return "ok"
+
+    async def _run() -> None:
+        eng = _engine(transcribe=_capture)
+        result = await eng.transcribe_stream(_async_chunks([b"", b"real", b""]))
+        assert result == "ok"
+        assert received[0] == b"real"
+
+    asyncio.run(_run())
+
+
+def test_transcribe_stream_returns_transcript_text() -> None:
+    async def _run() -> None:
+        eng = _engine()
+        result = await eng.transcribe_stream(_async_chunks([b"audio_data"]))
+        assert result == _FAKE_TRANSCRIPT
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# say
+# ---------------------------------------------------------------------------
+
+
+def test_say_returns_true_on_success(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://example.railway.app")
+
+    async def _run() -> None:
+        eng = _engine()
+        ok = await eng.say("Buenas tardes.", call_sid=_FAKE_CALL_SID)
+        assert ok is True
+
+    asyncio.run(_run())
+
+
+def test_say_updates_correct_call_sid(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://x.example")
+
+    updated_sids: list[str] = []
+
+    async def _capture_update(call_sid: str, twiml: str) -> dict:
+        updated_sids.append(call_sid)
+        return {}
+
+    async def _run() -> None:
+        eng = _engine(update=_capture_update)
+        await eng.say("Hola", call_sid="CA_target_sid")
+        assert updated_sids == ["CA_target_sid"]
+
+    asyncio.run(_run())
+
+
+def test_say_twiml_contains_play_tag(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://x.example")
+
+    twiml_sent: list[str] = []
+
+    async def _capture_update(call_sid: str, twiml: str) -> dict:
+        twiml_sent.append(twiml)
+        return {}
+
+    async def _run() -> None:
+        eng = _engine(update=_capture_update)
+        await eng.say("Texto", call_sid="CA1")
+        assert len(twiml_sent) == 1
+        assert "<Play>" in twiml_sent[0]
+        assert "</Play>" in twiml_sent[0]
+        assert "https://x.example/voice/audio/" in twiml_sent[0]
+
+    asyncio.run(_run())
+
+
+def test_say_caches_audio_under_new_token(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://x.example")
+
+    twiml_sent: list[str] = []
+
+    async def _capture_update(call_sid: str, twiml: str) -> dict:
+        twiml_sent.append(twiml)
+        return {}
+
+    async def _run() -> None:
+        eng = _engine(update=_capture_update)
+        await eng.say("Texto", call_sid="CA1")
+        # Extract token from the TwiML URL
+        url = twiml_sent[0]
+        token = url.split("/voice/audio/")[1].split("<")[0].strip()
+        assert eng.get_audio(token) == _FAKE_AUDIO
+
+    asyncio.run(_run())
+
+
+def test_say_propagates_synth_error(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://x.example")
+
+    async def _run() -> None:
+        eng = _engine(synth=_synth_fail)
+        with pytest.raises(RuntimeError, match="ElevenLabs"):
+            await eng.say("Text", call_sid="CA1")
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# get_audio
+# ---------------------------------------------------------------------------
+
+
+def test_get_audio_returns_none_for_unknown_token() -> None:
+    eng = _engine()
+    assert eng.get_audio("no_such_token") is None
+
+
+def test_get_audio_returns_bytes_after_make_call(monkeypatch) -> None:
+    monkeypatch.setenv("TWILIO_FROM_NUMBER", "+1")
+    monkeypatch.setenv("TWILIO_TWIML_BASE_URL", "https://x.example")
+
+    async def _run() -> None:
+        eng = _engine()
+        result = await eng.make_call("+1", "Script")
+        assert eng.get_audio(result.call_token) == _FAKE_AUDIO
+
+    asyncio.run(_run())

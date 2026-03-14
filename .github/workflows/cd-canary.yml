@@ -1,0 +1,59 @@
+name: cd-canary
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ensure run dir
+        run: mkdir -p .run
+
+      - name: Mandatory gate - weekly eval
+        env:
+          KAN_API_BASE_URL: ${{ secrets.KAN_API_BASE_URL }}
+          KAN_CLIENT_ID: ${{ secrets.KAN_CLIENT_ID }}
+          KAN_CLIENT_TOKEN: ${{ secrets.KAN_CLIENT_TOKEN }}
+        run: |
+          python scripts/weekly_eval_harness.py \
+            --base-url "${KAN_API_BASE_URL}" \
+            --client-id "${KAN_CLIENT_ID}" \
+            --token "${KAN_CLIENT_TOKEN}" \
+            --out ".run/weekly_eval_report.json" \
+            --history-out ".run/weekly_eval_history.jsonl"
+
+      - name: Mandatory gate - release guard
+        run: |
+          python scripts/release_guard.py \
+            --history ".run/weekly_eval_history.jsonl" \
+            --latest-report ".run/weekly_eval_report.json" \
+            --require-report true
+
+      - name: Canary deploy with auto-rollback
+        env:
+          DEPLOY_CANARY_CMD: ${{ secrets.DEPLOY_CANARY_CMD }}
+          ROLLBACK_CANARY_CMD: ${{ secrets.ROLLBACK_CANARY_CMD }}
+          CANARY_HEALTHCHECK_URL: ${{ secrets.CANARY_HEALTHCHECK_URL }}
+          CANARY_HEALTHCHECK_TIMEOUT_SECONDS: "240"
+          WEEKLY_EVAL_HISTORY_PATH: ".run/weekly_eval_history.jsonl"
+          WEEKLY_EVAL_REPORT_PATH: ".run/weekly_eval_report.json"
+        run: |
+          bash scripts/cd_guarded_canary.sh

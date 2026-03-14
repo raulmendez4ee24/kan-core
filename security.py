@@ -34,6 +34,19 @@ async def require_client_token(
     x_client_token: str = Header(..., alias="X-Client-Token"),
     session: AsyncSession = Depends(get_session),
 ) -> str:
+    return await validate_client_credentials(
+        session,
+        x_client_id=x_client_id,
+        x_client_token=x_client_token,
+    )
+
+
+async def validate_client_credentials(
+    session: AsyncSession,
+    *,
+    x_client_id: str,
+    x_client_token: str,
+) -> str:
     env_tokens = _load_env_tokens()
     if x_client_id in env_tokens and _token_matches(
         env_tokens[x_client_id], x_client_token
@@ -59,9 +72,16 @@ async def require_client_token(
 
 
 def verify_meta_signature(raw_body: bytes, header_signature: Optional[str]) -> bool:
+    require_signatures = os.getenv("REQUIRE_WEBHOOK_SIGNATURES", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     app_secret = os.getenv("META_APP_SECRET")
-    if not app_secret:
+    if not require_signatures:
         return True
+    if not app_secret:
+        return False
     if not header_signature:
         return False
 

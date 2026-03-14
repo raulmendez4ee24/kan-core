@@ -1,0 +1,164 @@
+{
+  "name": "Autonomia Total - Web Research + PC Execution",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "autonomia-total-run",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "responseData": {
+          "send": true,
+          "response": 200,
+          "responseBody": "{\"status\":\"accepted\",\"detail\":\"Research + execution started\"}"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        260,
+        320
+      ],
+      "name": "Webhook Trigger"
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "goal",
+              "value": "={{ $json.goal || \"Investigar y ejecutar objetivo\" }}"
+            },
+            {
+              "name": "execution_mode",
+              "value": "={{ $json.execution_mode || \"autonomous\" }}"
+            },
+            {
+              "name": "start_url",
+              "value": "={{ $json.start_url || \"\" }}"
+            }
+          ],
+          "number": [
+            {
+              "name": "max_steps",
+              "value": "={{ $json.max_steps || 8 }}"
+            },
+            {
+              "name": "min_sources",
+              "value": "={{ $json.min_sources || 5 }}"
+            },
+            {
+              "name": "max_results_per_query",
+              "value": "={{ $json.max_results_per_query || 5 }}"
+            },
+            {
+              "name": "self_heal_max_attempts",
+              "value": "={{ $json.self_heal_max_attempts || 2 }}"
+            },
+            {
+              "name": "quality_min_score",
+              "value": "={{ $json.quality_min_score || 0.65 }}"
+            }
+          ],
+          "boolean": [
+            {
+              "name": "dry_run",
+              "value": "={{ $json.dry_run || false }}"
+            },
+            {
+              "name": "require_verified_sources",
+              "value": "={{ $json.require_verified_sources || false }}"
+            },
+            {
+              "name": "include_brave_fallback",
+              "value": "={{ $json.include_brave_fallback !== false }}"
+            },
+            {
+              "name": "enable_self_healing",
+              "value": "={{ $json.enable_self_healing !== false }}"
+            },
+            {
+              "name": "enforce_quality_gate",
+              "value": "={{ $json.enforce_quality_gate || false }}"
+            },
+            {
+              "name": "dynamic_risk_controls",
+              "value": "={{ $json.dynamic_risk_controls || false }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        560,
+        320
+      ],
+      "name": "Normalize Input"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.KAN_BASE_URL + '/desktop-autonomy/research-run' }}",
+        "sendHeaders": true,
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "X-Client-Id",
+              "value": "={{ $env.KAN_CLIENT_ID }}"
+            },
+            {
+              "name": "X-Client-Token",
+              "value": "={{ $env.KAN_CLIENT_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { goal: $json.goal, execution_mode: $json.execution_mode, start_url: $json.start_url || null, max_steps: $json.max_steps, dry_run: $json.dry_run, min_sources: $json.min_sources, max_results_per_query: $json.max_results_per_query, include_brave_fallback: $json.include_brave_fallback, require_verified_sources: $json.require_verified_sources, enable_self_healing: $json.enable_self_healing, self_heal_max_attempts: $json.self_heal_max_attempts, quality_min_score: $json.quality_min_score, enforce_quality_gate: $json.enforce_quality_gate, dynamic_risk_controls: $json.dynamic_risk_controls } }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        320
+      ],
+      "name": "Research + Execute"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Research + Execute",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "staticData": null
+}

@@ -1,11 +1,13 @@
 import os
+import sys
 from functools import lru_cache
 from typing import AsyncGenerator
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, close_all_sessions, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -13,7 +15,17 @@ DATABASE_URL = os.getenv(
 )
 SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() in {"1", "true", "yes"}
 
-engine = create_async_engine(DATABASE_URL, echo=SQL_ECHO, pool_pre_ping=True)
+_in_pytest = bool(os.getenv("PYTEST_CURRENT_TEST")) or ("pytest" in sys.modules)
+_use_null_pool = _in_pytest or os.getenv("DB_USE_NULL_POOL", "false").lower() in {"1", "true", "yes"}
+
+_engine_kwargs = {
+    "echo": SQL_ECHO,
+    "pool_pre_ping": True,
+}
+if _use_null_pool:
+    _engine_kwargs["poolclass"] = NullPool
+
+engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
 
@@ -56,3 +68,12 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(ModelsBase.metadata.create_all)
+
+
+async def close_db() -> None:
+    """Dispose SQLAlchemy async engine/pool to avoid leaked connections on shutdown."""
+    try:
+        await close_all_sessions()
+    except Exception:
+        pass
+    await engine.dispose()

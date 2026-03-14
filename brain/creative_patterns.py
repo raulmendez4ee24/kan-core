@@ -1,0 +1,248 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass(frozen=True)
+class CreativePatternTemplate:
+    pattern_name: str
+    category: str
+    use_case: str
+    traffic_temperature: str
+    template: str
+    example: str
+    risks: tuple[str, ...]
+
+
+_PATTERNS: tuple[CreativePatternTemplate, ...] = (
+    CreativePatternTemplate(
+        pattern_name="curiosity_gap",
+        category="attention",
+        use_case="Abrir curiosidad sin revelar todo el mecanismo.",
+        traffic_temperature="cold",
+        template="La razon por la que {audience} pierde {outcome} no es la que cree.",
+        example="La razon por la que muchos negocios pierden ventas en WhatsApp no es la falta de trafico.",
+        risks=("Puede sonar clickbait si no aterriza rapido.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="pain_loss",
+        category="pain",
+        use_case="Enfatizar la perdida silenciosa que ya existe.",
+        traffic_temperature="cold",
+        template="Cada {problem_unit} que dejas sin atender te cuesta {outcome}.",
+        example="Cada lead que dejas sin seguimiento te cuesta ventas.",
+        risks=("Puede saturar si se usa sin evidencia o solucion clara.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="before_after",
+        category="transformation",
+        use_case="Mostrar contraste operativo antes vs despues.",
+        traffic_temperature="warm",
+        template="Antes: {before_state}. Despues: {after_state}.",
+        example="Antes: tardabas horas en responder. Despues: el seguimiento sale en segundos.",
+        risks=("Sin datos concretos puede sonar aspiracional.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="contrarian",
+        category="positioning",
+        use_case="Cuestionar una creencia comun del mercado.",
+        traffic_temperature="cold",
+        template="No necesitas {common_belief}; necesitas {better_path}.",
+        example="No necesitas mas trafico; necesitas responder y seguir mejor.",
+        risks=("Si ataca demasiado puede generar rechazo.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="authority",
+        category="credibility",
+        use_case="Apalancar criterio experto o experiencia de ejecucion.",
+        traffic_temperature="warm",
+        template="Despues de analizar {scope}, yo veo el mismo cuello: {problem}.",
+        example="Despues de analizar decenas de embudos, yo sigo viendo el mismo cuello: leads sin seguimiento.",
+        risks=("Sin autoridad real o prueba concreta pierde fuerza.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="demo_result",
+        category="demonstration",
+        use_case="Mostrar resultado observable del sistema.",
+        traffic_temperature="warm",
+        template="Asi se ve cuando {offer} convierte {input_flow} en {outcome}.",
+        example="Asi se ve cuando un agente convierte mensajes entrantes en citas reales.",
+        risks=("Necesita demostracion visual o caso cercano.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="objection_breaker",
+        category="objection",
+        use_case="Romper una objecion concreta antes del CTA.",
+        traffic_temperature="warm",
+        template="Si piensas que {objection}, en realidad el problema es {reframe}.",
+        example="Si piensas que tu problema es la segmentacion, en realidad el cuello esta en el seguimiento.",
+        risks=("Si no acierta la objecion real, pierde relevancia.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="hidden_cost",
+        category="economics",
+        use_case="Poner costo economico al problema invisible.",
+        traffic_temperature="cold",
+        template="Lo caro no es {surface_issue}; lo caro es {hidden_cost}.",
+        example="Lo caro no es el anuncio; lo caro es dejar conversaciones sin cerrar.",
+        risks=("Puede sonar agresivo si no se cuantifica o contextualiza.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="urgency",
+        category="time",
+        use_case="Activar accion por ventana de oportunidad o desgaste actual.",
+        traffic_temperature="hot",
+        template="Si hoy no corriges {problem}, mañana sigues perdiendo {outcome}.",
+        example="Si hoy no corriges el seguimiento, mañana sigues perdiendo citas.",
+        risks=("Usada en exceso genera desconfianza.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="proof",
+        category="credibility",
+        use_case="Usar prueba o evidencia sencilla para anclar el mensaje.",
+        traffic_temperature="warm",
+        template="{proof_statement}. Por eso {offer} ataca primero {problem}.",
+        example="La gente si escribe; lo que falla es la respuesta. Por eso Growth ataca primero el seguimiento.",
+        risks=("La prueba debe sonar verificable, no inventada.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="micro_case",
+        category="story",
+        use_case="Contar un mini caso de 1-2 lineas.",
+        traffic_temperature="warm",
+        template="Un negocio como {audience} tenia {problem}. Cambiando {lever}, logro {outcome}.",
+        example="Una clinica tenia leads sin seguimiento. Cambiando su respuesta inicial, logro mas citas.",
+        risks=("Sin especificidad queda como historia genérica.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="identity_callout",
+        category="targeting",
+        use_case="Llamar a un tipo de negocio especifico.",
+        traffic_temperature="cold",
+        template="Si eres {audience} y sigues manejando {problem} a mano, esto te interesa.",
+        example="Si eres una clinica y sigues manejando WhatsApp a mano, esto te interesa.",
+        risks=("Si la audiencia no esta clara, reduce alcance util.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="diagnostic_question",
+        category="qualification",
+        use_case="Abrir con pregunta que ya segmenta.",
+        traffic_temperature="cold",
+        template="¿Cuantos {problem_unit} pierdes hoy por {problem}?",
+        example="¿Cuantos leads pierdes hoy por no responder a tiempo?",
+        risks=("Puede frenar si la pregunta es demasiado compleja.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="future_cost",
+        category="economics",
+        use_case="Proyectar el costo del problema si no cambia.",
+        traffic_temperature="warm",
+        template="Si mantienes {problem} igual otros 90 dias, vas a seguir perdiendo {outcome}.",
+        example="Si mantienes tu seguimiento igual otros 90 dias, vas a seguir perdiendo ventas.",
+        risks=("Puede sonar fatalista si no propone salida clara.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="myth_breaker",
+        category="education",
+        use_case="Desmentir una explicacion simplista del mercado.",
+        traffic_temperature="cold",
+        template="El mito: {common_belief}. La realidad: {better_path}.",
+        example="El mito: el problema es solo el anuncio. La realidad: el seguimiento define la venta.",
+        risks=("Si no se argumenta, queda como opinion.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="mechanism_reveal",
+        category="education",
+        use_case="Explicar el mecanismo oculto de conversion.",
+        traffic_temperature="warm",
+        template="La mayor mejora viene de {mechanism}, no de {common_belief}.",
+        example="La mayor mejora viene del follow-up inmediato, no de tocar intereses cada dia.",
+        risks=("Muy técnico en trafico frio puede bajar scroll stop.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="speed_advantage",
+        category="competition",
+        use_case="Enmarcar respuesta y seguimiento como ventaja competitiva.",
+        traffic_temperature="warm",
+        template="Tu ventaja no es hablar mas fuerte; es responder {speed_claim}.",
+        example="Tu ventaja no es hablar mas fuerte; es responder antes que tu competencia.",
+        risks=("Sin demostrar velocidad real, pierde credibilidad.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="offer_stack",
+        category="offer",
+        use_case="Apilar beneficios concretos de la oferta.",
+        traffic_temperature="warm",
+        template="{offer} te ayuda a {benefit_one}, {benefit_two} y {benefit_three}.",
+        example="Growth te ayuda a responder, seguir y agendar mejor.",
+        risks=("Si enumera demasiado, se vuelve feature dump.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="unexpected_enemy",
+        category="positioning",
+        use_case="Señalar al enemigo real del resultado.",
+        traffic_temperature="cold",
+        template="Tu enemigo no es {surface_issue}; es {hidden_cause}.",
+        example="Tu enemigo no es la falta de trafico; es la falta de seguimiento.",
+        risks=("Puede sonar repetitivo si ya usas hidden_cost o contrarian.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="one_metric",
+        category="proof",
+        use_case="Usar una sola métrica fuerte como ancla.",
+        traffic_temperature="warm",
+        template="Si hoy tu {metric_name} esta en {metric_state}, tu embudo te esta avisando algo.",
+        example="Si hoy tu tasa de respuesta esta baja, tu embudo te esta avisando algo.",
+        risks=("Necesita metrica comprensible para la audiencia.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="social_scene",
+        category="story",
+        use_case="Pintar una escena reconocible del negocio.",
+        traffic_temperature="cold",
+        template="{scene}. Mientras eso pasa, tus {problem_unit} se enfrían.",
+        example="Te escriben, contestas tarde y luego se te pasan. Mientras eso pasa, tus leads se enfrían.",
+        risks=("Puede perder fuerza si la escena no es muy común.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="operator_replacement",
+        category="automation",
+        use_case="Enmarcar automatización como alivio operativo.",
+        traffic_temperature="warm",
+        template="Yo pongo a {offer} a hacer {task} mientras tu te enfocas en {higher_value}.",
+        example="Yo pongo a un agente a seguir leads mientras tu te enfocas en cerrar.",
+        risks=("Si suena a reemplazo total, puede activar resistencia.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="qualification_filter",
+        category="sales",
+        use_case="Atraer al lead correcto y descalificar al curioso.",
+        traffic_temperature="warm",
+        template="Si quieres {outcome} pero hoy sigues con {problem}, te conviene ver esto.",
+        example="Si quieres mas citas pero hoy sigues respondiendo tarde, te conviene ver esto.",
+        risks=("Puede reducir alcance si el encuadre es demasiado estrecho.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="silent_leak",
+        category="economics",
+        use_case="Nombrar la fuga del embudo como perdida silenciosa.",
+        traffic_temperature="cold",
+        template="La fuga no esta donde miras; esta en {problem}.",
+        example="La fuga no esta en el anuncio; esta en lo que pasa despues del clic.",
+        risks=("Necesita una salida clara para no quedarse en diagnostico.",),
+    ),
+    CreativePatternTemplate(
+        pattern_name="decision_shortener",
+        category="conversion",
+        use_case="Reducir friccion y enfocar el siguiente paso.",
+        traffic_temperature="hot",
+        template="No necesitas decidir todo hoy; solo necesitas {cta_step}.",
+        example="No necesitas decidir todo hoy; solo necesitas una llamada corta para revisar tu caso.",
+        risks=("Sin urgencia puede sonar tibio.",),
+    ),
+)
+
+
+def load_creative_patterns() -> List[CreativePatternTemplate]:
+    return list(_PATTERNS)

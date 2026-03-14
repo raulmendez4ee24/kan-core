@@ -1,0 +1,136 @@
+[
+  {
+    "case_id": "eval_onboarding_001",
+    "scenario": "SaaS - nuevo cliente pro sin activar features clave",
+    "input": {
+      "organization_id": "test_saas_005",
+      "objective": "activar cliente nuevo y llegar a primer valor en 7 dias",
+      "context": {
+        "cliente_tipo": "saas",
+        "plan": "pro",
+        "dias_desde_registro": 3,
+        "features_activadas": ["login"],
+        "features_pendientes": ["integracion_api", "primer_agente", "whatsapp_conectado"],
+        "perfil": "startup_tech",
+        "tam_equipo": 5,
+        "objetivo_cliente": "automatizar_soporte"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["in_progress", "waiting"],
+      "acciones_esperadas": ["enviar_guia_activacion", "agendar_onboarding_call", "recordatorio_dia_5"],
+      "no_debe_hacer": ["esperar_sin_contactar", "enviar_spam_diario"],
+      "debe_escalar": false,
+      "razon_exito": "cliente en ventana critica de activacion, accion proactiva"
+    }
+  },
+  {
+    "case_id": "eval_onboarding_002",
+    "scenario": "B2B - empresa grande con integracion tecnica compleja",
+    "input": {
+      "organization_id": "test_b2b_004",
+      "objective": "completar onboarding enterprise con integracion custom",
+      "context": {
+        "cliente_tipo": "b2b",
+        "plan": "enterprise",
+        "contacto_principal": "IT_manager",
+        "stakeholders": ["IT", "operaciones", "direccion"],
+        "integraciones_requeridas": ["CRM_salesforce", "ERP_SAP", "whatsapp_business"],
+        "dias_desde_firma": 10,
+        "bloqueador_actual": "IT_no_ha_dado_credenciales_API",
+        "deadline_go_live": "30_dias"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "escalated"],
+      "acciones_esperadas": ["escalar_bloqueador_IT", "contactar_sponsor_ejecutivo", "documentar_dependencias"],
+      "no_debe_hacer": ["esperar_pasivamente", "iniciar_configuracion_sin_credenciales"],
+      "debe_escalar": true,
+      "razon_exito": "bloqueador tecnico requiere escalacion ejecutiva para no perder deadline"
+    }
+  },
+  {
+    "case_id": "eval_onboarding_003",
+    "scenario": "SaaS - cliente WhatsApp agent sin conectar canal",
+    "input": {
+      "organization_id": "test_saas_006",
+      "objetivo": "activar agente de WhatsApp para cliente nuevo",
+      "context": {
+        "cliente_tipo": "saas",
+        "producto_comprado": "agente_whatsapp",
+        "dias_desde_pago": 5,
+        "numero_whatsapp_business": "no_proporcionado",
+        "acceso_meta_business": "desconocido",
+        "nivel_tecnico_cliente": "bajo",
+        "contacto_preferido": "whatsapp"
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "in_progress"],
+      "acciones_esperadas": ["solicitar_numero_whatsapp", "enviar_guia_meta_business", "ofrecer_ayuda_configuracion"],
+      "no_debe_hacer": ["asumir_que_tiene_cuenta_meta", "bloquear_hasta_que_lo_haga_solo"],
+      "debe_escalar": false,
+      "razon_exito": "cliente de bajo perfil tecnico necesita guia paso a paso"
+    }
+  },
+  {
+    "case_id": "eval_onboarding_004_replan",
+    "scenario": "Enterprise - onboarding trabado por dependencias cruzadas y deadline critico",
+    "input": {
+      "organization_id": "test_b2b_004",
+      "objective": "replantear onboarding enterprise con bloqueos tecnicos y ejecutivos",
+      "context": {
+        "case_key": "eval_onboarding_004_replan",
+        "cliente_tipo": "b2b",
+        "plan": "enterprise",
+        "deadline_go_live": "10_dias",
+        "dependencias_criticas": ["crm", "erp", "security_review"],
+        "high_impact_operation": true,
+        "eval_force_risk_score": 0.81,
+        "eval_force_replan": true
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["waiting", "completed", "escalated"],
+      "acciones_esperadas": [],
+      "no_debe_hacer": [],
+      "debe_escalar": false,
+      "razon_exito": "caso de replan: waiting es valido mientras el agente replanifica"
+    }
+  },
+  {
+    "case_id": "eval_onboarding_005_compensation",
+    "scenario": "SaaS - onboarding mal automatizado requiere compensacion y recuperacion de confianza",
+    "input": {
+      "organization_id": "test_saas_006",
+      "objective": "corregir onboarding roto y compensar al cliente por friccion inicial",
+      "context": {
+        "case_key": "eval_onboarding_005_compensation",
+        "cliente_tipo": "saas",
+        "producto_comprado": "agente_whatsapp",
+        "dias_desde_pago": 8,
+        "high_impact_operation": true,
+        "eval_force_risk_score": 0.89,
+        "eval_force_compensation": true,
+        "eval_seed_rollbackable": {
+          "operation_type": "delete",
+          "action_name": "delete_customer",
+          "restore_payload": {
+            "name": "Eval Onboarding Recovery",
+            "email": "onboarding-comp@example.com",
+            "phone": "+520000000003",
+            "status": "onboarding_recovery",
+            "external_id": "eval-onboarding-comp-001"
+          }
+        }
+      }
+    },
+    "expected_outcome": {
+      "status_validos": ["completed", "escalated"],
+      "acciones_esperadas": [],
+      "no_debe_hacer": [],
+      "debe_escalar": false,
+      "razon_exito": "caso de compensacion: debe cerrar con compensacion o escalar tras intentarlo"
+    }
+  }
+]

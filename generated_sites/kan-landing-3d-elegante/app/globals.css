@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  background: linear-gradient(180deg, #f7f5f2 0%, #f0ece6 50%, #ebe6de 100%);
+  color: #151a22;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.container-landing {
+  margin: 0 auto;
+  max-width: 1160px;
+  padding: 0 1.25rem;
+}
+
+.glass-soft {
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.section-title {
+  font-size: clamp(1.6rem, 2.8vw, 2.5rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.section-sub {
+  color: #465061;
+  font-size: 1.02rem;
+  line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
