@@ -20,48 +20,51 @@ _SUPPORTED_YCLOUD_EVENTS = [
 ]
 
 
-def _ycloud_signature_debug(raw_body: bytes, signature: Optional[str]) -> dict:
+def _raw_secret() -> str:
+    """Return the configured secret, stripping any erroneous 'whsec_' prefix.
+
+    YCloud does not use Stripe-style prefixed secrets.  If the env var was
+    accidentally stored as 'whsec_<hex>', we strip the prefix so the HMAC key
+    matches what YCloud actually signed with.
+    """
     secret = str(os.getenv("YCLOUD_WEBHOOK_SECRET") or "").strip()
-    signature_text = str(signature or "").strip()
-    parts = {}
-    for chunk in signature_text.split(","):
+    if secret.startswith("whsec_"):
+        secret = secret[len("whsec_"):]
+    return secret
+
+
+def _compute_hmac(secret: str, timestamp: str, raw_body: bytes) -> str:
+    signed_payload = timestamp.encode("utf-8") + b"." + raw_body
+    return hmac.new(
+        secret.encode("utf-8"),
+        signed_payload,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _parse_signature_header(signature: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Parse 't=<ts>,s=<digest>' → (timestamp, digest).  Returns (None, None) on failure."""
+    text = str(signature or "").strip()
+    parts: dict[str, str] = {}
+    for chunk in text.split(","):
         if "=" not in chunk:
             continue
         key, value = chunk.split("=", 1)
         parts[key.strip()] = value.strip()
-    timestamp = parts.get("t")
-    digest = parts.get("s") or parts.get("v1")
-    expected = None
-    if secret and timestamp:
-        expected = hmac.new(
-            secret.encode("utf-8"),
-            timestamp.encode("utf-8") + b"." + raw_body,
-            hashlib.sha256,
-        ).hexdigest()
-    return {
-        "secret_configured": bool(secret),
-        "signature_present": bool(signature_text),
-        "signature_header_raw": signature_text,
-        "timestamp": timestamp,
-        "body_length": len(raw_body),
-        "expected_prefix": (expected or "")[:12],
-        "received_prefix": (digest or "")[:12],
-        "expected": expected,
-        "received": digest,
-    }
+    return parts.get("t"), parts.get("s") or parts.get("v1")
 
 
 def _verify_ycloud_signature(raw_body: bytes, signature: Optional[str]) -> bool:
-    debug = _ycloud_signature_debug(raw_body, signature)
-    secret = str(os.getenv("YCLOUD_WEBHOOK_SECRET") or "").strip()
+    secret = _raw_secret()
     if not secret:
+        # No secret configured — allow all (safe for local dev, not for prod)
         return True
-    if not debug["signature_present"]:
+
+    timestamp, digest = _parse_signature_header(signature)
+    if not timestamp or not digest:
         return False
-    expected = debug["expected"]
-    digest = debug["received"]
-    if not expected or not digest:
-        return False
+
+    expected = _compute_hmac(secret, timestamp, raw_body)
     return hmac.compare_digest(expected, digest)
 
 
@@ -72,20 +75,30 @@ async def ycloud_whatsapp_receive(
     ycloud_signature: Optional[str] = Header(None, alias="YCloud-Signature"),
 ):
     raw_body = await request.body()
-    debug = _ycloud_signature_debug(raw_body, ycloud_signature)
-    logger.warning(
-        "YCloud signature debug: secret_configured=%s signature_present=%s signature_raw=%s "
-        "timestamp=%s body_length=%s expected_prefix=%s received_prefix=%s",
-        debug["secret_configured"],
-        debug["signature_present"],
-        debug["signature_header_raw"],
-        debug["timestamp"],
-        debug["body_length"],
-        debug["expected_prefix"],
-        debug["received_prefix"],
+
+    timestamp, received_digest = _parse_signature_header(ycloud_signature)
+    secret = _raw_secret()
+    expected_digest = _compute_hmac(secret, timestamp or "", raw_body) if secret and timestamp else None
+
+    match = (
+        hmac.compare_digest(expected_digest, received_digest)
+        if expected_digest and received_digest
+        else False
     )
-    if not _verify_ycloud_signature(raw_body, ycloud_signature):
+
+    if not match:
+        logger.warning(
+            "YCloud signature MISMATCH: secret_len=%d timestamp=%s body_len=%d "
+            "expected=%s received=%s",
+            len(secret),
+            timestamp,
+            len(raw_body),
+            (expected_digest or "")[:16],
+            (received_digest or "")[:16],
+        )
         raise HTTPException(status_code=401, detail="Invalid YCloud signature")
+
+    logger.debug("YCloud signature OK: timestamp=%s body_len=%d", timestamp, len(raw_body))
 
     try:
         payload = json.loads(raw_body.decode("utf-8"))
@@ -110,7 +123,7 @@ async def ycloud_setup(webhook_url: Optional[str] = None):
         or os.getenv("YCLOUD_WEBHOOK_URL")
         or "https://web-production-dbb6b.up.railway.app/webhooks/ycloud/whatsapp"
     ).strip()
-    secret_configured = bool(str(os.getenv("YCLOUD_WEBHOOK_SECRET") or "").strip())
+    secret_configured = bool(_raw_secret())
     return {
         "provider": "ycloud",
         "webhook_url": url,
