@@ -153,6 +153,7 @@ def test_business_mentor_weekly_review_updates_creative_memory(monkeypatch, tmp_
 
 
 def test_mentor_ask_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("KAN_CLIENT_ID", "test-client")
     monkeypatch.setenv("CLIENT_TOKENS_JSON", '{"test-client":"test-token"}')
 
     async def _fake_answer(self: BusinessMentor, question: str) -> str:
@@ -162,9 +163,21 @@ def test_mentor_ask_endpoint(monkeypatch) -> None:
     with TestClient(app) as client:
         response = client.post(
             "/mentor/ask",
-            headers={"X-Client-Id": "test-client", "X-Client-Token": "test-token"},
+            headers={"X-Client-Token": "test-token"},
             json={"question": "Como cierro mas ventas?"},
         )
+        assert response.status_code == 202
+        payload = response.json()
+        assert payload["status"] == "processing"
+        assert payload["job_id"]
 
-    assert response.status_code == 200
-    assert response.json()["answer"] == "mentor:Como cierro mas ventas?"
+        status_response = client.get(
+            f"/mentor/ask/{payload['job_id']}",
+            headers={"X-Client-Token": "test-token"},
+        )
+
+    assert status_response.status_code == 200
+    body = status_response.json()
+    assert body["status"] in {"processing", "done"}
+    if body["status"] == "done":
+        assert body["answer"] == "mentor:Como cierro mas ventas?"

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from brain.business_mentor import BusinessMentor
-from security import require_client_token
+from database import get_session
+from security import validate_client_credentials
 
 router = APIRouter(prefix="/mentor", tags=["mentor"])
 
@@ -18,6 +21,29 @@ router = APIRouter(prefix="/mentor", tags=["mentor"])
 # ---------------------------------------------------------------------------
 
 _jobs: dict[str, dict[str, Any]] = {}
+
+
+def _default_client_id() -> str:
+    for env_name in ("KAN_CLIENT_ID", "CLIENT_ID", "YCLOUD_DEFAULT_CLIENT_ID"):
+        value = str(os.getenv(env_name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+async def require_mentor_token(
+    x_client_token: str = Header(..., alias="X-Client-Token"),
+    x_client_id: str | None = Header(default=None, alias="X-Client-Id"),
+    session: AsyncSession = Depends(get_session),
+) -> str:
+    client_id = str(x_client_id or "").strip() or _default_client_id()
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Missing client id")
+    return await validate_client_credentials(
+        session,
+        x_client_id=client_id,
+        x_client_token=x_client_token,
+    )
 
 
 def _new_job(question: str) -> str:
@@ -94,7 +120,7 @@ class MentorJobStatus(BaseModel):
 async def mentor_ask(
     req: MentorAskRequest,
     background_tasks: BackgroundTasks,
-    _: str = Depends(require_client_token),
+    _: str = Depends(require_mentor_token),
 ):
     """
     Receive a question and return immediately with a job_id.
@@ -113,7 +139,7 @@ async def mentor_ask(
 @router.get("/ask/{job_id}", response_model=MentorJobStatus)
 async def mentor_ask_status(
     job_id: str,
-    _: str = Depends(require_client_token),
+    _: str = Depends(require_mentor_token),
 ):
     """Poll the status of a /mentor/ask job."""
     job = _jobs.get(job_id)
