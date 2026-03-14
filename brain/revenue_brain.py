@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from brain.agents.agent_governor import evaluate_handoff
+from brain.forge import OfferForge, save_generated_offer
 from brain.market_scanner import MarketScanner
 from brain.meta_ads_autonomy import MetaAdsAnalyzer, MetaAdsExecutor, generate_and_store_meta_ads_dry_run
 from brain.product_discovery import ProductDiscovery
@@ -15,6 +16,7 @@ from brain.revenue_operators import (
     CreatorOperator,
     FarmerOperator,
 )
+from brain.revenue_operators.hunter import OpportunityInput
 
 AUTOMATION_THRESHOLD = float(os.getenv("REVENUE_AUTOMATION_THRESHOLD") or 0.82)
 
@@ -59,6 +61,7 @@ class RevenueBrain:
         self.closer = CloserOperator()
         self.farmer = FarmerOperator()
         self.creator = CreatorOperator()
+        self.offer_forge = OfferForge()
         self.meta_ads_analyzer = MetaAdsAnalyzer()
         self.meta_ads_executor = MetaAdsExecutor()
         self.product_discovery = ProductDiscovery()
@@ -151,6 +154,7 @@ class RevenueBrain:
             conversations=list(metrics.get("conversations") or []),
             lost_deals=list(metrics.get("lost_deals") or []),
         )
+        metrics["hunt_report"] = hunt_report.model_dump(mode="json")
         if hunt_report.top_opportunities:
             top = hunt_report.top_opportunities[0]
             actions.append(
@@ -234,6 +238,45 @@ class RevenueBrain:
             executed=executed,
             recommended=recommended,
         )
+
+    def _opportunity_score_to_input(self, payload: dict[str, Any]) -> dict[str, Any]:
+        metadata = dict(payload.get("metadata") or {})
+        return {
+            "business_name": str(payload.get("business_name") or "Unknown opportunity"),
+            "vertical": str(payload.get("vertical") or "services"),
+            "city": str(payload.get("city") or "Guadalajara"),
+            "estimated_market_size": int(metadata.get("estimated_market_size") or round(float(payload.get("market_score") or 0.0) * 10)),
+            "pain_score": round(float(payload.get("pain_score") or 0.0) / 100.0, 4),
+            "payment_capacity_score": round(float(payload.get("payment_capacity_score") or 0.0) / 100.0, 4),
+            "competition_score": round(float(payload.get("competition_score") or 0.0) / 100.0, 4),
+            "stack_fit_score": round(float(payload.get("stack_fit_score") or 0.0) / 100.0, 4),
+            "source": str(metadata.get("source") or "hunter"),
+            "metadata": metadata,
+        }
+
+    async def _forge_hunter_assets(self, top_opportunities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        generated_assets: list[dict[str, Any]] = []
+        for payload in top_opportunities:
+            try:
+                opportunity = self._opportunity_score_to_input(payload)
+                complete_offer = await self.offer_forge.forge_offer(
+                    OpportunityInput.model_validate(opportunity)
+                )
+                landing_html = None
+                ad_creatives = []
+                score = float(payload.get("score") or 0.0)
+                if score > 85:
+                    landing_html = self.offer_forge.generate_landing_page(complete_offer)
+                    ad_creatives = self.offer_forge.generate_ad_creatives(complete_offer)
+                stored = save_generated_offer(
+                    complete_offer,
+                    landing_html=landing_html,
+                    ad_creatives=ad_creatives,
+                )
+                generated_assets.append(stored.model_dump(mode="json"))
+            except Exception:
+                continue
+        return generated_assets
 
     async def evening_check(self, snapshot: dict[str, Any] | None = None) -> DailyBriefing:
         try:
@@ -395,6 +438,13 @@ class RevenueBrain:
         metrics = await self.gather_metrics(snapshot)
         diagnosis = await self.diagnose(metrics)
         actions = await self.decide_actions(diagnosis)
+        hunt_report = dict(diagnosis.metrics.get("hunt_report") or {})
+        generated_offers = await self._forge_hunter_assets(list(hunt_report.get("top_opportunities") or []))
+        if generated_offers:
+            diagnosis.metrics["generated_offers"] = generated_offers
+            diagnosis.opportunities.append(
+                f"OfferForge generó {len(generated_offers)} ofertas para oportunidades del Hunter."
+            )
         executed: list[RevenueAction] = []
         recommended: list[RevenueAction] = []
 
