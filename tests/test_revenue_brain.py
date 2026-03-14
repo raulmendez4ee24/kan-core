@@ -140,6 +140,51 @@ def test_revenue_brain_daily_cycle_full_mocked_run() -> None:
                         "metadata": {"source_url": "https://competidor.com/services/new", "change_type": "new_service_page"},
                     },
                 ],
+                "complaints_results": [
+                    {
+                        "business_name": "complaints:web_presence",
+                        "vertical": "services",
+                        "city": "MX",
+                        "has_website": False,
+                        "has_bot": False,
+                        "estimated_market_size": 180,
+                        "pain_score": 0.88,
+                        "payment_capacity_score": 0.72,
+                        "competition_score": 0.24,
+                        "stack_fit_score": 0.9,
+                        "metadata": {"theme": "web_presence", "signals_count": 14},
+                    }
+                ],
+                "arbitrage_results": [
+                    {
+                        "business_name": "arbitrage:VoiceCloser",
+                        "vertical": "services",
+                        "city": "LATAM",
+                        "has_website": False,
+                        "has_bot": False,
+                        "estimated_market_size": 260,
+                        "pain_score": 0.79,
+                        "payment_capacity_score": 0.74,
+                        "competition_score": 0.18,
+                        "stack_fit_score": 0.87,
+                        "metadata": {"product_name": "VoiceCloser", "has_spanish_competitor": False},
+                    }
+                ],
+                "internal_demand_results": [
+                    {
+                        "business_name": "internal_demand:whatsapp_automation",
+                        "vertical": "services",
+                        "city": "MX",
+                        "has_website": False,
+                        "has_bot": False,
+                        "estimated_market_size": 160,
+                        "pain_score": 0.81,
+                        "payment_capacity_score": 0.71,
+                        "competition_score": 0.22,
+                        "stack_fit_score": 0.88,
+                        "metadata": {"theme": "whatsapp_automation", "signals_count": 9},
+                    }
+                ],
                 "pipeline_leads": [
                     PipelineLead(
                         lead_id="lead-hot",
@@ -249,5 +294,39 @@ def test_revenue_brain_daily_cycle_full_mocked_run() -> None:
 
         print("\n=== FULL DAILY BRIEFING ===")
         print(json.dumps(briefing.model_dump(mode="json"), indent=2, ensure_ascii=False))
+
+    asyncio.run(_run())
+
+
+def test_revenue_brain_gather_metrics_uses_new_market_scanners() -> None:
+    brain = RevenueBrain()
+
+    async def _scan_complaints():
+        return [{"business_name": "complaints:web_presence", "vertical": "services"}]
+
+    async def _scan_arbitrage():
+        return [{"business_name": "arbitrage:VoiceCloser", "vertical": "services"}]
+
+    async def _scan_internal_demand(*, crm_texts=None, conversation_texts=None):
+        assert crm_texts == ["pagina web", "crm"]
+        assert conversation_texts == ["automatizacion whatsapp"]
+        return [{"business_name": "internal_demand:crm_followup", "vertical": "services"}]
+
+    brain.hunter.scan_complaints = _scan_complaints  # type: ignore[method-assign]
+    brain.hunter.scan_arbitrage = _scan_arbitrage  # type: ignore[method-assign]
+    brain.hunter.scan_internal_demand = _scan_internal_demand  # type: ignore[method-assign]
+    brain.hunter.scan_job_boards = lambda city="Guadalajara": __import__("asyncio").sleep(0, result=[])  # type: ignore[method-assign]
+    brain.hunter.scan_competitor_activity = lambda domains: __import__("asyncio").sleep(0, result=[])  # type: ignore[method-assign]
+
+    async def _run() -> None:
+        metrics = await brain.gather_metrics(
+            {
+                "crm_signal_texts": ["pagina web", "crm"],
+                "conversation_signal_texts": ["automatizacion whatsapp"],
+            }
+        )
+        assert metrics["complaints_results"][0]["business_name"] == "complaints:web_presence"
+        assert metrics["arbitrage_results"][0]["business_name"] == "arbitrage:VoiceCloser"
+        assert metrics["internal_demand_results"][0]["business_name"] == "internal_demand:crm_followup"
 
     asyncio.run(_run())

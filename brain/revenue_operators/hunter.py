@@ -473,6 +473,9 @@ class HunterOperator:
         trends_results: Iterable[dict[str, Any]] | None = None,
         job_board_results: Iterable[OpportunityInput | dict[str, Any]] | None = None,
         competitor_activity_results: Iterable[OpportunityInput | dict[str, Any]] | None = None,
+        complaints_results: Iterable[OpportunityInput | dict[str, Any]] | None = None,
+        arbitrage_results: Iterable[OpportunityInput | dict[str, Any]] | None = None,
+        internal_demand_results: Iterable[OpportunityInput | dict[str, Any]] | None = None,
         business_types: Iterable[str] = (),
         hashtags: Iterable[str] = (),
         trend_keywords: Iterable[str] = (),
@@ -489,6 +492,12 @@ class HunterOperator:
             scanned.append(self._coerce_opportunity(row, source_hint="job_boards"))
         for row in list(competitor_activity_results or []):
             scanned.append(self._coerce_opportunity(row, source_hint="competitor_activity"))
+        for row in list(complaints_results or []):
+            scanned.append(self._coerce_opportunity(row, source_hint="complaints"))
+        for row in list(arbitrage_results or []):
+            scanned.append(self._coerce_opportunity(row, source_hint="arbitrage"))
+        for row in list(internal_demand_results or []):
+            scanned.append(self._coerce_opportunity(row, source_hint="internal_demand"))
 
         deduped_scanned: list[OpportunityInput] = []
         seen_keys: set[str] = set()

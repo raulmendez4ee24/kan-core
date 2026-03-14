@@ -77,6 +77,15 @@ class RevenueBrain:
                 if competitor_domains
                 else []
             )
+        if "complaints_results" not in metrics:
+            metrics["complaints_results"] = await self.hunter.scan_complaints()
+        if "arbitrage_results" not in metrics:
+            metrics["arbitrage_results"] = await self.hunter.scan_arbitrage()
+        if "internal_demand_results" not in metrics:
+            metrics["internal_demand_results"] = await self.hunter.scan_internal_demand(
+                crm_texts=list(metrics.get("crm_signal_texts") or []),
+                conversation_texts=list(metrics.get("conversation_signal_texts") or []),
+            )
         if "meta_ads_report" not in metrics:
             try:
                 meta_snapshot = metrics.get("meta_ads_snapshot")
@@ -131,6 +140,9 @@ class RevenueBrain:
             trends_results=list(metrics.get("trends_results") or []),
             job_board_results=list(metrics.get("job_board_results") or []),
             competitor_activity_results=list(metrics.get("competitor_activity_results") or []),
+            complaints_results=list(metrics.get("complaints_results") or []),
+            arbitrage_results=list(metrics.get("arbitrage_results") or []),
+            internal_demand_results=list(metrics.get("internal_demand_results") or []),
             business_types=list(metrics.get("business_types") or []),
             hashtags=list(metrics.get("hashtags") or []),
             trend_keywords=list(metrics.get("trend_keywords") or []),

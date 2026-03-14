@@ -72,3 +72,57 @@ def test_scan_competitor_activity_detects_changes():
     assert opportunities[0].source == "competitor_activity"
     assert "/servicios/chatbot-whatsapp" in opportunities[0].metadata["new_service_pages"]
 
+
+def test_scan_complaints_groups_themes_with_threshold():
+    scanner = MarketScanner()
+    rows = [
+        {"platform": "reddit:mexico", "text": f"Necesito una pagina web para mi negocio {idx}"}
+        for idx in range(11)
+    ]
+    rows.extend(
+        {"platform": "x", "text": f"Es muy caro contratar community manager {idx}"}
+        for idx in range(4)
+    )
+
+    opportunities = __import__("asyncio").run(scanner.scan_complaints(results=rows))
+    assert len(opportunities) == 1
+    assert opportunities[0].source == "complaints"
+    assert opportunities[0].metadata["theme"] == "web_presence"
+    assert opportunities[0].metadata["signals_count"] == 11
+
+
+def test_scan_arbitrage_returns_products_without_spanish_competitor():
+    scanner = MarketScanner()
+    opportunities = __import__("asyncio").run(
+        scanner.scan_arbitrage(
+            results=[
+                {"name": "VoiceCloser", "tagline": "Voice sales agent for clinics", "has_spanish_competitor": False},
+                {"name": "LocalCRM", "tagline": "CRM for local business", "has_spanish_competitor": True},
+            ]
+        )
+    )
+    assert len(opportunities) == 1
+    assert opportunities[0].source == "arbitrage"
+    assert opportunities[0].metadata["product_name"] == "VoiceCloser"
+
+
+def test_scan_internal_demand_ranks_unmet_needs():
+    scanner = MarketScanner()
+    opportunities = __import__("asyncio").run(
+        scanner.scan_internal_demand(
+            crm_texts=[
+                "El cliente pide pagina web y seguimiento por whatsapp",
+                "Necesita una página web para su negocio",
+                "No tiene sitio web y quiere landing page",
+            ],
+            conversation_texts=[
+                "Quiero automatización whatsapp para vender más",
+                "Busco pagina web y chatbot",
+                "Necesito pagina web urgente",
+            ],
+        )
+    )
+    assert opportunities
+    assert opportunities[0].source == "internal_demand"
+    assert opportunities[0].metadata["theme"] == "web_presence"
+    assert opportunities[0].metadata["signals_count"] >= 4

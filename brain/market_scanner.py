@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote_plus
 
 import httpx
+from sqlalchemy import select
 
 from brain.revenue_operators.hunter import HunterOperator, OpportunityInput, _normalize_vertical
+from database import AsyncSessionLocal
+from models import ConversationLog, CrmInteraction
 
 HtmlFetcher = Callable[[str], Awaitable[str]]
 
@@ -32,6 +38,86 @@ _SERVICE_PAGE_RE = re.compile(
 )
 _PRICE_RE = re.compile(r"(?:(?:MXN|USD|\$)\s?[0-9][0-9,\.]*)|(?:[0-9][0-9,\.]*\s?(?:MXN|USD))", re.IGNORECASE)
 
+_COMPLAINT_KEYWORDS: tuple[str, ...] = (
+    "no funciona",
+    "no existe",
+    "alguien conoce",
+    "necesito",
+    "es muy caro",
+    "alternativa a",
+)
+
+_NEED_THEMES: dict[str, tuple[str, ...]] = {
+    "web_presence": (
+        "pagina web",
+        "página web",
+        "sitio web",
+        "landing page",
+        "wordpress",
+        "web developer",
+        "desarrollador web",
+        "no existe pagina",
+        "sin web",
+    ),
+    "whatsapp_automation": (
+        "automatizacion whatsapp",
+        "automatización whatsapp",
+        "whatsapp business",
+        "responder whatsapp",
+        "seguimiento whatsapp",
+    ),
+    "chatbot": (
+        "chatbot",
+        "bot para negocio",
+        "bot de ventas",
+        "bot de whatsapp",
+    ),
+    "social_media_management": (
+        "community manager",
+        "redes sociales",
+        "manejo de redes",
+        "social media",
+    ),
+    "seo": ("seo", "google maps", "posicionamiento", "aparecer en google"),
+    "crm_followup": (
+        "crm",
+        "seguimiento a clientes",
+        "seguimiento de leads",
+        "pipeline",
+        "recepcionista",
+        "atencion a clientes",
+    ),
+    "voice_agent": (
+        "agente de voz",
+        "llamadas automaticas",
+        "llamadas automáticas",
+        "voz ia",
+        "voice agent",
+    ),
+    "pricing_pressure": (
+        "es muy caro",
+        "caro",
+        "precio",
+        "alternativa a",
+        "más barato",
+        "mas barato",
+    ),
+}
+
+_ARBITRAGE_VERTICAL_HINTS: dict[str, str] = {
+    "chatbot": "services",
+    "whatsapp": "services",
+    "crm": "services",
+    "booking": "services",
+    "voice": "services",
+    "sales": "services",
+    "restaurant": "restaurants",
+    "clinic": "clinics",
+    "dental": "dentists",
+    "spa": "spas",
+    "barber": "barbershops",
+}
+
 
 async def _default_fetch(url: str) -> str:
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
@@ -50,6 +136,85 @@ def _infer_vertical(text: str, default: str = "services") -> str:
 
 def _sanitize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalized_text(text: str) -> str:
+    lowered = _sanitize_text(text).lower()
+    replacements = str.maketrans(
+        {
+            "á": "a",
+            "é": "e",
+            "í": "i",
+            "ó": "o",
+            "ú": "u",
+            "ñ": "n",
+        }
+    )
+    return lowered.translate(replacements)
+
+
+def _resolve_theme(text: str) -> str:
+    normalized = _normalized_text(text)
+    for theme, hints in _NEED_THEMES.items():
+        if any(_normalized_text(hint) in normalized for hint in hints):
+            return theme
+    words = [word for word in re.findall(r"[a-z0-9]{4,}", normalized) if word not in {"para", "como", "con", "esta"}]
+    return words[0] if words else "general_automation"
+
+
+def _estimate_signal_opportunity(
+    *,
+    theme: str,
+    count: int,
+    source: str,
+    sample_texts: list[str],
+    vertical: str = "services",
+) -> OpportunityInput:
+    intensity = min(1.0, count / 18.0)
+    return OpportunityInput(
+        business_name=f"{source}:{theme}",
+        vertical=_normalize_vertical(vertical),
+        city="MX",
+        has_website=False,
+        has_bot=False,
+        estimated_market_size=max(120, count * 18),
+        pain_score=round(min(0.96, 0.62 + (intensity * 0.26)), 4),
+        payment_capacity_score=round(min(0.88, 0.64 + (intensity * 0.14)), 4),
+        competition_score=round(max(0.14, 0.42 - (intensity * 0.16)), 4),
+        stack_fit_score=round(min(0.96, 0.72 + (intensity * 0.18)), 4),
+        source=source,
+        metadata={
+            "theme": theme,
+            "signals_count": count,
+            "sample_texts": sample_texts[:5],
+        },
+    )
+
+
+def _extract_text_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    extracted: list[dict[str, Any]] = []
+    for row in rows:
+        text = _sanitize_text(
+            " ".join(
+                str(row.get(field) or "")
+                for field in ("text", "title", "body", "content", "description")
+            )
+        )
+        if not text:
+            continue
+        payload = dict(row)
+        payload["text"] = text
+        payload["theme"] = str(row.get("theme") or _resolve_theme(text))
+        extracted.append(payload)
+    return extracted
+
+
+def _infer_arbitrage_vertical(name: str, tagline: str) -> str:
+    haystack = _normalized_text(f"{name} {tagline}")
+    for hint, vertical in _ARBITRAGE_VERTICAL_HINTS.items():
+        if hint in haystack:
+            return vertical
+    return "services"
 
 
 def _extract_json_ld_blocks(html: str) -> list[dict[str, Any]]:
@@ -304,3 +469,193 @@ class MarketScanner(HunterOperator):
             "service_pages": sorted(set(service_pages)),
             "prices": sorted(set(_sanitize_text(price) for price in prices)),
         }
+
+    async def scan_complaints(
+        self,
+        *,
+        results: Iterable[dict[str, Any]] | None = None,
+        fetcher: HtmlFetcher | None = None,
+        pain_keywords: Iterable[str] | None = None,
+    ) -> list[OpportunityInput]:
+        rows: list[dict[str, Any]]
+        if results is not None:
+            rows = _extract_text_rows(results)
+        else:
+            fetch = fetcher or _default_fetch
+            rows = []
+            for subreddit in ("mexico", "entrepreneur", "smallbusiness"):
+                for keyword in list(pain_keywords or _COMPLAINT_KEYWORDS):
+                    url = (
+                        f"https://www.reddit.com/r/{subreddit}/search.json?"
+                        f"q={quote_plus(keyword)}&restrict_sr=1&sort=new&t=month&limit=25"
+                    )
+                    try:
+                        raw = await fetch(url)
+                        payload = json.loads(raw)
+                    except Exception:
+                        continue
+                    for child in (((payload or {}).get("data") or {}).get("children") or []):
+                        data = child.get("data") or {}
+                        rows.append(
+                            {
+                                "platform": f"reddit:{subreddit}",
+                                "title": data.get("title"),
+                                "body": data.get("selftext"),
+                                "url": f"https://reddit.com{data.get('permalink') or ''}",
+                            }
+                        )
+            for keyword in list(pain_keywords or _COMPLAINT_KEYWORDS):
+                url = f"https://nitter.net/search?f=tweets&q={quote_plus(keyword + ' negocio mexico')}"
+                try:
+                    html = await fetch(url)
+                except Exception:
+                    continue
+                for match in re.finditer(r'<div class="tweet-content[^"]*">(?P<text>.*?)</div>', html, re.IGNORECASE | re.DOTALL):
+                    text = re.sub(r"<[^>]+>", " ", match.group("text"))
+                    rows.append({"platform": "x", "text": _sanitize_text(text)})
+
+            rows = _extract_text_rows(rows)
+
+        counts: Counter[str] = Counter()
+        samples: dict[str, list[str]] = {}
+        platforms: dict[str, set[str]] = {}
+        for row in rows:
+            theme = str(row.get("theme") or "").strip()
+            if not theme:
+                continue
+            counts[theme] += 1
+            samples.setdefault(theme, []).append(str(row.get("text") or ""))
+            platform = str(row.get("platform") or "web")
+            platforms.setdefault(theme, set()).add(platform)
+
+        opportunities: list[OpportunityInput] = []
+        for theme, count in counts.most_common():
+            if count < 10:
+                continue
+            opportunity = _estimate_signal_opportunity(
+                theme=theme,
+                count=count,
+                source="complaints",
+                sample_texts=samples.get(theme, []),
+            )
+            opportunity.metadata["platforms"] = sorted(platforms.get(theme, set()))
+            opportunities.append(opportunity)
+        return opportunities
+
+    async def scan_arbitrage(
+        self,
+        *,
+        results: Iterable[dict[str, Any]] | None = None,
+        fetcher: HtmlFetcher | None = None,
+        search_fetcher: HtmlFetcher | None = None,
+    ) -> list[OpportunityInput]:
+        products: list[dict[str, Any]]
+        if results is not None:
+            products = [dict(row) for row in results]
+        else:
+            fetch = fetcher or _default_fetch
+            try:
+                html = await fetch("https://www.producthunt.com/")
+            except Exception:
+                products = []
+            else:
+                products = []
+                for name, tagline in re.findall(r'"name":"([^"]+)".{0,200}?"tagline":"([^"]+)"', html):
+                    if len(products) >= 12:
+                        break
+                    products.append({"name": _sanitize_text(name), "tagline": _sanitize_text(tagline)})
+
+        search = search_fetcher or _default_fetch
+        opportunities: list[OpportunityInput] = []
+        for row in products:
+            name = _sanitize_text(str(row.get("name") or ""))
+            tagline = _sanitize_text(str(row.get("tagline") or row.get("description") or ""))
+            if not name:
+                continue
+            has_spanish_competitor = row.get("has_spanish_competitor")
+            search_query = str(row.get("search_query") or f'"{name}" mexico españa latam alternativa')
+            if has_spanish_competitor is None:
+                try:
+                    search_html = await search(f"https://duckduckgo.com/html/?q={quote_plus(search_query)}")
+                except Exception:
+                    search_html = ""
+                has_spanish_competitor = bool(
+                    re.search(
+                        r"(mexico|méxico|latam|espa[nñ]ol|alternativa|competidor|agencia)",
+                        _normalized_text(search_html),
+                        re.IGNORECASE,
+                    )
+                )
+            if bool(has_spanish_competitor):
+                continue
+            vertical = _infer_arbitrage_vertical(name, tagline)
+            opportunities.append(
+                OpportunityInput(
+                    business_name=f"arbitrage:{name}",
+                    vertical=_normalize_vertical(vertical),
+                    city="LATAM",
+                    has_website=False,
+                    has_bot=False,
+                    estimated_market_size=int(row.get("estimated_market_size") or 260),
+                    trend_score=float(row.get("trend_score") or 82.0),
+                    pain_score=float(row.get("pain_score") or 0.79),
+                    payment_capacity_score=float(row.get("payment_capacity_score") or 0.74),
+                    competition_score=float(row.get("competition_score") or 0.18),
+                    stack_fit_score=float(row.get("stack_fit_score") or 0.87),
+                    source="arbitrage",
+                    metadata={
+                        "product_name": name,
+                        "tagline": tagline,
+                        "search_query": search_query,
+                        "has_spanish_competitor": False,
+                    },
+                )
+            )
+        return opportunities
+
+    async def scan_internal_demand(
+        self,
+        *,
+        crm_texts: Iterable[str] | None = None,
+        conversation_texts: Iterable[str] | None = None,
+        since_days: int = 90,
+    ) -> list[OpportunityInput]:
+        texts: list[str] = []
+        texts.extend(_sanitize_text(text) for text in (crm_texts or []) if _sanitize_text(text))
+        texts.extend(_sanitize_text(text) for text in (conversation_texts or []) if _sanitize_text(text))
+
+        if not texts:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, since_days))
+            try:
+                async with AsyncSessionLocal() as session:
+                    crm_rows = await session.execute(
+                        select(CrmInteraction.content).where(CrmInteraction.created_at >= cutoff)
+                    )
+                    conv_rows = await session.execute(
+                        select(ConversationLog.content).where(ConversationLog.timestamp >= cutoff)
+                    )
+                texts.extend(_sanitize_text(row[0]) for row in crm_rows.all() if row and _sanitize_text(str(row[0] or "")))
+                texts.extend(_sanitize_text(row[0]) for row in conv_rows.all() if row and _sanitize_text(str(row[0] or "")))
+            except Exception:
+                pass
+
+        counts: Counter[str] = Counter()
+        samples: dict[str, list[str]] = {}
+        for text in texts:
+            theme = _resolve_theme(text)
+            counts[theme] += 1
+            samples.setdefault(theme, []).append(text)
+
+        opportunities: list[OpportunityInput] = []
+        for theme, count in counts.most_common():
+            if count <= 0:
+                continue
+            opportunities.append(
+                _estimate_signal_opportunity(
+                    theme=theme,
+                    count=count,
+                    source="internal_demand",
+                    sample_texts=samples.get(theme, []),
+                )
+            )
+        return opportunities
