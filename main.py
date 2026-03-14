@@ -6,7 +6,6 @@ from database import init_db
 from observability import init_observability
 from routes.shopify import router as shopify_router
 from routes.webhooks import router as webhooks_router
-from routes.ycloud import router as ycloud_router
 
 app = FastAPI(title="kan-core", version="0.1.0")
 init_observability(app)
@@ -25,4 +24,3 @@ async def healthz():
 
 app.include_router(webhooks_router)
 app.include_router(shopify_router)
-app.include_router(ycloud_router)

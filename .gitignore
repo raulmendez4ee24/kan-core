@@ -1,5 +1,24 @@
 .env
+.env.secrets
+.env.secrets.*
+!.env.secrets.example
+.env.backup.*
+.env.secrets.backup.*
+.env.bak
+*.env.bak
+.env.*.bak
+.env.*.vm
 .venv
 __pycache__/
 *.pyc
 .DS_Store
+.run/
+.browser_profile/
+.coverage
+
+# Credential files — service accounts, API keys, etc.
+google-creds.json
+*-creds.json
+*-credentials.json
+*-service-account.json
+*_service_account.json
