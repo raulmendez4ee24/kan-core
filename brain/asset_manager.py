@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 from pathlib import Path
 from tempfile import gettempdir
 from textwrap import fill
@@ -28,6 +29,22 @@ _JETBRAINS_MONO_URL = "https://github.com/JetBrains/JetBrainsMono/raw/master/fon
 _SORA_FONT_NAME = "Sora-Bold.ttf"
 _JETBRAINS_MONO_NAME = "JetBrains-Mono-Regular.ttf"
 _FONT_DOWNLOAD_ATTEMPTED: set[str] = set()
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F300-\U0001F5FF"
+    "\U0001F600-\U0001F64F"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F700-\U0001F77F"
+    "\U0001F780-\U0001F7FF"
+    "\U0001F800-\U0001F8FF"
+    "\U0001F900-\U0001F9FF"
+    "\U0001FA00-\U0001FA6F"
+    "\U0001FA70-\U0001FAFF"
+    "\u2600-\u26FF"
+    "\u2700-\u27BF"
+    "]+",
+    flags=re.UNICODE,
+)
 
 BRAND: dict[str, Any] = {
     "name": "KAN Logic",
@@ -171,6 +188,8 @@ def build_image_prompt(
         f"Brand colors must influence the image, especially {BRAND['palette']['background']} and {BRAND['palette']['accent']}. "
         f"Tone: {voice}. "
         "Make it polished, commercial, premium, and relevant for a modern Mexican business audience. "
+        "ABSOLUTELY NO TEXT, WORDS, LETTERS, OR TYPOGRAPHY IN THE IMAGE. "
+        "Pure background composition only. Any text in the image will ruin the design. "
         "Leave clean space for text overlay, no text in the image. "
         f"Follow these visual rules: {visual_rules}."
     )
@@ -204,6 +223,11 @@ class AssetManager:
         if not ready:
             raise KeyError(f"Unknown prompt_key: {key}")
         return ready
+
+    def _strip_emojis(self, value: str) -> str:
+        cleaned = _EMOJI_RE.sub("", str(value or ""))
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
 
     def _signature(self, *, public_id: str, timestamp: int) -> str:
         api_secret = self._api_secret()
@@ -369,10 +393,31 @@ class AssetManager:
 
         draw.rounded_rectangle((80, 80, 1000, 1000), radius=36, outline=_ACCENT, width=8)
         draw.rectangle((120, 120, 220, 220), fill=_ACCENT)
-        draw.rounded_rectangle((110, 250, 970, 860), radius=28, fill=(30, 34, 56))
 
         output.parent.mkdir(parents=True, exist_ok=True)
         image.save(output, format="JPEG", quality=92, optimize=True)
+
+    def _apply_text_gradient(self, image: Image.Image, *, top: int, bottom: int) -> Image.Image:
+        base = image.convert("RGBA")
+        overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        width = base.size[0]
+        height = max(1, bottom - top)
+        gradient = Image.new("L", (1, height))
+        for y in range(height):
+            midpoint = height * 0.45
+            if y <= midpoint:
+                alpha = int(128 * (y / max(1, midpoint)))
+            else:
+                alpha = int(128 * ((height - y) / max(1, height - midpoint)))
+            gradient.putpixel((0, y), max(0, min(128, alpha)))
+        alpha_mask = gradient.resize((width, height))
+        overlay.paste((0, 0, 0, 0), (0, 0, width, base.size[1]))
+        overlay.paste((0, 0, 0, 0), (0, 0, width, top))
+        overlay.paste((0, 0, 0, 0), (0, bottom, width, base.size[1]))
+        band = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        band.putalpha(alpha_mask)
+        overlay.alpha_composite(band, (0, top))
+        return Image.alpha_composite(base, overlay)
 
     def _overlay_text_and_wordmark(
         self,
@@ -382,19 +427,18 @@ class AssetManager:
         include_logo: bool,
         image_path: Path,
     ) -> None:
+        cleaned_hook = self._strip_emojis(hook_text)
+        cleaned_topic = self._strip_emojis(topic)
         image = Image.open(image_path).convert("RGB")
+        image = self._apply_text_gradient(image, top=84, bottom=520).convert("RGB")
         draw = ImageDraw.Draw(image)
         width, height = image.size
         title_font = self._load_font(78, bold=True)
         topic_font = self._load_mono_font(28)
         brand_font = self._load_font(28, bold=True)
 
-        panel = (64, 84, width - 64, 510)
-        draw.rounded_rectangle(panel, radius=30, fill=(15, 18, 34))
-        draw.rounded_rectangle(panel, radius=30, outline=_ACCENT, width=4)
-
-        wrapped_hook = fill(str(hook_text or "").strip(), width=18)
-        wrapped_topic = fill(str(topic or "").strip(), width=28)
+        wrapped_hook = fill(cleaned_hook, width=18)
+        wrapped_topic = fill(cleaned_topic, width=28)
         draw.text((110, 130), wrapped_hook, fill=_TEXT, font=title_font, spacing=10)
         draw.text((110, 395), wrapped_topic, fill=_MUTED, font=topic_font, spacing=8)
 

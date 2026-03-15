@@ -150,6 +150,8 @@ def test_build_image_prompt_uses_brand_rules_and_style_preset() -> None:
     assert "Tus pacientes esperan demasiado" in prompt
     assert "Vertical: clinics" in prompt
     assert "Style preset: premium" in prompt
+    assert "ABSOLUTELY NO TEXT, WORDS, LETTERS, OR TYPOGRAPHY IN THE IMAGE." in prompt
+    assert "Any text in the image will ruin the design." in prompt
     assert "leave clean space for text overlay, no text in the image" in prompt
     assert "#1a1a2e" in prompt
     assert "#e94560" in prompt
@@ -183,3 +185,9 @@ def test_font_cache_paths_use_tmp_directory() -> None:
     mono_path = manager._font_cache_path("JetBrains-Mono-Regular.ttf")
     assert str(sora_path).endswith("/Sora-Bold.ttf")
     assert str(mono_path).endswith("/JetBrains-Mono-Regular.ttf")
+
+
+def test_strip_emojis_removes_problematic_characters() -> None:
+    manager = AssetManager()
+    cleaned = manager._strip_emojis("Test de publicación automática 🤖🔥✅")
+    assert cleaned == "Test de publicación automática"
