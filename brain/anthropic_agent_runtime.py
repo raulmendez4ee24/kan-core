@@ -17,25 +17,8 @@ def anthropic_agentic_enabled() -> bool:
     return os.getenv("ENABLE_ANTHROPIC_AGENTIC_RUNTIME", "false").lower() in {"1", "true", "yes"}
 
 
-def _thinking_enabled() -> bool:
-    return os.getenv("ANTHROPIC_AGENTIC_ENABLE_THINKING", "true").lower() in {"1", "true", "yes"}
-
-
 def _safe_eval_mode() -> bool:
     return os.getenv("EVAL_HARNESS_SAFE_RUNTIME", "false").lower() in {"1", "true", "yes"}
-
-
-def _budget_for(domain: str) -> int:
-    token = str(domain or "").strip().lower()
-    if "payment" in token:
-        return int(os.getenv("ANTHROPIC_AGENTIC_THINKING_BUDGET_PAYMENT", "8000"))
-    if "collections" in token:
-        return int(os.getenv("ANTHROPIC_AGENTIC_THINKING_BUDGET_COLLECTIONS", "7000"))
-    if "onboarding" in token:
-        return int(os.getenv("ANTHROPIC_AGENTIC_THINKING_BUDGET_ONBOARDING", "5000"))
-    if "support" in token:
-        return int(os.getenv("ANTHROPIC_AGENTIC_THINKING_BUDGET_SUPPORT", "5000"))
-    return int(os.getenv("ANTHROPIC_AGENTIC_THINKING_BUDGET_DEFAULT", "4000"))
 
 
 def build_agentic_payload(
@@ -65,12 +48,6 @@ def build_agentic_payload(
         ],
         "max_tokens": int(os.getenv("ANTHROPIC_MAX_OUTPUT_TOKENS", "1024")),
     }
-    if _thinking_enabled() and not _safe_eval_mode():
-        payload["thinking"] = {
-            "type": "enabled",
-            "budget_tokens": int(thinking_budget_override or _budget_for(domain)),
-        }
-        payload["betas"] = [os.getenv("ANTHROPIC_AGENTIC_INTERLEAVED_BETA", "interleaved-thinking-2025-05-14")]
     return payload
 
 

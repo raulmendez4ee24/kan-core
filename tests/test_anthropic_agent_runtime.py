@@ -11,9 +11,7 @@ from brain.anthropic_agent_runtime import (
 )
 
 
-def test_build_agentic_payload_includes_thinking_and_beta(monkeypatch) -> None:
-    monkeypatch.setenv("ANTHROPIC_AGENTIC_ENABLE_THINKING", "true")
-    monkeypatch.setenv("ANTHROPIC_AGENTIC_INTERLEAVED_BETA", "interleaved-thinking-2025-05-14")
+def test_build_agentic_payload_has_no_thinking_or_betas(monkeypatch) -> None:
     payload = build_agentic_payload(
         system_prompt="sys",
         user_message="hello",
@@ -21,8 +19,8 @@ def test_build_agentic_payload_includes_thinking_and_beta(monkeypatch) -> None:
         tools=[{"name": "get_case_state", "description": "d", "input_schema": {"type": "object"}}],
     )
 
-    assert payload["thinking"]["type"] == "enabled"
-    assert payload["betas"] == ["interleaved-thinking-2025-05-14"]
+    assert "thinking" not in payload
+    assert "betas" not in payload
     assert payload["tools"][0]["name"] == "get_case_state"
 
 

@@ -466,7 +466,7 @@ class CognitiveEngine:
         p = str(provider or "").strip().lower()
         if p == "openai":
             if not req or req.startswith("gemini") or req.startswith("claude"):
-                return os.getenv("OPENAI_MODEL", "gpt-5.2-chat-latest")
+                return os.getenv("OPENAI_MODEL", "claude-sonnet-4-6")
             return req
         if p == "anthropic":
             if not req or req.startswith("gpt-") or req.startswith("gemini"):
