@@ -12,6 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 from brain.attribution_engine import list_upcoming_bookings, save_briefing
 from brain.brand_director import BrandDirector
 from brain.business_mentor import BusinessMentor
+from brain.content_publisher import ContentPublisher
 from brain.revenue_brain import DailyBriefing, RevenueBrain
 
 logger = logging.getLogger("kan_core.revenue_scheduler")
@@ -27,6 +28,7 @@ class RevenueBrainScheduler:
         self.revenue_brain = revenue_brain or RevenueBrain()
         self.brand_director = BrandDirector()
         self.business_mentor = BusinessMentor()
+        self.content_publisher = ContentPublisher()
         self.scheduler = AsyncIOScheduler(timezone=REVENUE_TZ)
         self.last_daily_briefing: DailyBriefing | None = None
         self.last_evening_briefing: DailyBriefing | None = None
@@ -34,6 +36,7 @@ class RevenueBrainScheduler:
         self.last_mentor_weekly_review: dict[str, object] | None = None
         self.last_brand_daily_post: dict[str, object] | None = None
         self.last_brand_weekly_plan: list[dict[str, object]] | None = None
+        self.last_published_content: list[dict[str, object]] | None = None
         self._configured = False
 
     def configure(self) -> None:
@@ -70,6 +73,12 @@ class RevenueBrainScheduler:
             replace_existing=True,
         )
         self.scheduler.add_job(
+            self.run_content_publish_queue,
+            CronTrigger(minute=0, timezone=REVENUE_TZ),  # every hour on the hour
+            id="content-publish-hourly",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
             self.run_business_mentor_daily_briefing,
             CronTrigger(hour=6, minute=30, timezone=REVENUE_TZ),
             id="business-mentor-daily-briefing",
@@ -88,7 +97,7 @@ class RevenueBrainScheduler:
         if not self.scheduler.running:
             self.scheduler.start()
             logger.info(
-                "RevenueBrain scheduler started with jobs: daily_cycle@06:00, brand_daily@06:00, mentor_daily@06:30, evening_check@18:00, brand_weekly@Sun09:00, mentor_weekly@Sun10:00, confirmation_calls@hourly (%s)",
+                "RevenueBrain scheduler started with jobs: daily_cycle@06:00, brand_daily@06:00, mentor_daily@06:30, evening_check@18:00, brand_weekly@Sun09:00, mentor_weekly@Sun10:00, confirmation_calls@hourly, content_publish@hourly (%s)",
                 REVENUE_TZ.key,
             )
 
@@ -147,6 +156,24 @@ class RevenueBrainScheduler:
         except Exception:
             duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
             logger.exception("RevenueBrain confirmation_calls failed after %sms.", duration_ms)
+            return []
+
+    async def run_content_publish_queue(self) -> list[dict[str, object]]:
+        started = time.perf_counter()
+        logger.info("RevenueBrain content_publish_queue started.")
+        try:
+            published = await self.content_publisher.check_scheduled_posts()
+            duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+            self.last_published_content = [item.model_dump(mode="json") for item in published]
+            logger.info(
+                "RevenueBrain content_publish_queue finished in %sms — processed %s posts.",
+                duration_ms,
+                len(published),
+            )
+            return self.last_published_content
+        except Exception:
+            duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+            logger.exception("RevenueBrain content_publish_queue failed after %sms.", duration_ms)
             return []
 
     async def run_evening_check(self) -> DailyBriefing | None:

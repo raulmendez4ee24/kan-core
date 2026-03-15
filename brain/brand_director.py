@@ -85,6 +85,8 @@ class ContentPost(BaseModel):
     hashtags: list[str] = Field(default_factory=list)
     best_posting_time: str
     cta: str
+    media_url: str | None = None
+    thumbnail_url: str | None = None
 
 
 class FeedReport(BaseModel):
@@ -211,10 +213,17 @@ class BrandDirector:
         db_path: str | Path | None = None,
         fetcher: Optional[Callable[[str], Awaitable[str]]] = None,
         whatsapp_sender: Callable[..., Any] = send_ycloud_whatsapp_text_message,
+        content_publisher: Any | None = None,
     ) -> None:
         self.db_path = Path(db_path) if db_path else _db_path()
         self.fetcher = fetcher
         self.whatsapp_sender = whatsapp_sender
+        if content_publisher is None:
+            from brain.content_publisher import ContentPublisher
+
+            self.content_publisher = ContentPublisher()
+        else:
+            self.content_publisher = content_publisher
 
     async def initialize(self) -> None:
         async with aiosqlite.connect(self.db_path) as conn:
@@ -431,7 +440,30 @@ class BrandDirector:
             hashtags=hashtags,
             best_posting_time=best_time,
             cta=cta,
+            media_url=str(os.getenv("CONTENT_DEFAULT_MEDIA_URL") or "").strip() or None,
         )
+
+    def _publish_at_for_post(self, post: ContentPost, *, reference_date: date) -> datetime:
+        hour = 9
+        minute = 0
+        raw_time = str(post.best_posting_time or "").strip()
+        try:
+            if ":" in raw_time:
+                parsed_hour, parsed_minute = raw_time.split(":", 1)
+                hour = int(parsed_hour)
+                minute = int(parsed_minute)
+        except ValueError:
+            hour = 9
+            minute = 0
+        local_dt = datetime(
+            reference_date.year,
+            reference_date.month,
+            reference_date.day,
+            hour,
+            minute,
+            tzinfo=BRAND_TZ,
+        )
+        return local_dt.astimezone(timezone.utc)
 
     async def generate_weekly_content_plan(
         self,
@@ -527,4 +559,9 @@ class BrandDirector:
             f"Hora sugerida: {post.best_posting_time}"
         )
         await self._send_to_raul(message)
+        if post.platform == "instagram":
+            await self.content_publisher.schedule_post(
+                post,
+                self._publish_at_for_post(post, reference_date=ref_day),
+            )
         return post

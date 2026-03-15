@@ -50,6 +50,7 @@ def test_revenue_scheduler_jobs_registered():
     assert "brand-daily-post" in jobs
     assert "brand-weekly-plan" in jobs
     assert "revenue-evening-check" in jobs
+    assert "content-publish-hourly" in jobs
     assert "business-mentor-daily-briefing" in jobs
     assert "business-mentor-weekly-review" in jobs
 
