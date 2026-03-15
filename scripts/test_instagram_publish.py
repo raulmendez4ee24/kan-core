@@ -16,8 +16,9 @@ from brain.brand_director import ContentPost
 from brain.content_publisher import ContentPublisher
 from config.env_loader import load_environment
 
-TEST_CAPTION = "Test de publicación automática — KAN Logic 🤖"
+TEST_CAPTION = "Test de publicación automática — KAN Logic"
 TEST_HASHTAGS = ["#kanlogic", "#automatizacion", "#ia"]
+TEST_HOOK = "¿Sigues contestando WhatsApp a mano?"
 
 
 def _build_post() -> ContentPost:
@@ -29,7 +30,7 @@ def _build_post() -> ContentPost:
         pillar="test",
         format="static",
         topic="Test de publicación automática",
-        hook=TEST_CAPTION,
+        hook=TEST_HOOK,
         full_script=TEST_CAPTION,
         visual_direction="Imagen de prueba generada y subida a Cloudinary para validar publicación automática.",
         caption=caption,

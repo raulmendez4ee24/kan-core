@@ -152,6 +152,7 @@ def test_build_image_prompt_uses_brand_rules_and_style_preset() -> None:
     assert "Style preset: premium" in prompt
     assert "ABSOLUTELY NO TEXT, WORDS, LETTERS, OR TYPOGRAPHY IN THE IMAGE." in prompt
     assert "Any text in the image will ruin the design." in prompt
+    assert "No emojis, no icons, no symbols, no UI elements, no text overlays, no watermarks." in prompt
     assert "leave clean space for text overlay, no text in the image" in prompt
     assert "#1a1a2e" in prompt
     assert "#e94560" in prompt

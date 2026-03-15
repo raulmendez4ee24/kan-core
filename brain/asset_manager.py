@@ -190,6 +190,7 @@ def build_image_prompt(
         "Make it polished, commercial, premium, and relevant for a modern Mexican business audience. "
         "ABSOLUTELY NO TEXT, WORDS, LETTERS, OR TYPOGRAPHY IN THE IMAGE. "
         "Pure background composition only. Any text in the image will ruin the design. "
+        "No emojis, no icons, no symbols, no UI elements, no text overlays, no watermarks. "
         "Leave clean space for text overlay, no text in the image. "
         f"Follow these visual rules: {visual_rules}."
     )
@@ -417,6 +418,8 @@ class AssetManager:
         band = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         band.putalpha(alpha_mask)
         overlay.alpha_composite(band, (0, top))
+        left_cover = Image.new("RGBA", (int(width * 0.60), int(base.size[1] * 0.50)), (0, 0, 0, 191))
+        overlay.alpha_composite(left_cover, (0, 0))
         return Image.alpha_composite(base, overlay)
 
     def _overlay_text_and_wordmark(
