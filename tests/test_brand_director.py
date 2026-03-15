@@ -52,7 +52,7 @@ def test_brand_audit_builds_brand_bible(tmp_path: Path) -> None:
 
 def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch) -> None:
     sent_messages: list[str] = []
-    scheduled: list[tuple[str, str]] = []
+    scheduled: list[tuple[str, str, str | None]] = []
 
     async def _fetch(_url: str) -> str:
         return """
@@ -72,8 +72,12 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
 
     class _StubPublisher:
         async def schedule_post(self, post, publish_at):
-            scheduled.append((post.post_id, publish_at.isoformat()))
+            scheduled.append((post.post_id, publish_at.isoformat(), post.media_url))
             return {"scheduled": True}
+
+    class _StubAssetManager:
+        async def generate_post_image(self, post):
+            return f"https://cdn.example.com/{post.post_id}.jpg"
 
     monkeypatch.setenv("RAUL_WHATSAPP_TO", "+5215512345678")
     monkeypatch.setenv("YCLOUD_WHATSAPP_FROM", "+5215599999999")
@@ -84,6 +88,7 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
             fetcher=_fetch,
             whatsapp_sender=_fake_send,
             content_publisher=_StubPublisher(),
+            asset_manager=_StubAssetManager(),
         )
         plan = await director.generate_weekly_content_plan(
             instagram_handle="kanlogic",
@@ -96,8 +101,10 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
         post = await director.generate_daily_post(reference_date=date(2026, 3, 17))
         assert post.day_index == 1
         assert post.full_script
+        assert post.media_url == "https://cdn.example.com/2026-03-16-1.jpg"
         assert sent_messages
         assert scheduled
+        assert scheduled[0][2] == "https://cdn.example.com/2026-03-16-1.jpg"
         assert "Post de hoy" in sent_messages[0]
 
     asyncio.run(_run())

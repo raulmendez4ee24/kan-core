@@ -214,6 +214,7 @@ class BrandDirector:
         fetcher: Optional[Callable[[str], Awaitable[str]]] = None,
         whatsapp_sender: Callable[..., Any] = send_ycloud_whatsapp_text_message,
         content_publisher: Any | None = None,
+        asset_manager: Any | None = None,
     ) -> None:
         self.db_path = Path(db_path) if db_path else _db_path()
         self.fetcher = fetcher
@@ -224,6 +225,12 @@ class BrandDirector:
             self.content_publisher = ContentPublisher()
         else:
             self.content_publisher = content_publisher
+        if asset_manager is None:
+            from brain.asset_manager import AssetManager
+
+            self.asset_manager = AssetManager()
+        else:
+            self.asset_manager = asset_manager
 
     async def initialize(self) -> None:
         async with aiosqlite.connect(self.db_path) as conn:
@@ -560,6 +567,8 @@ class BrandDirector:
         )
         await self._send_to_raul(message)
         if post.platform == "instagram":
+            media_url = await self.asset_manager.generate_post_image(post)
+            post = post.model_copy(update={"media_url": media_url})
             await self.content_publisher.schedule_post(
                 post,
                 self._publish_at_for_post(post, reference_date=ref_day),
