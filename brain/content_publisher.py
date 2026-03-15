@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -60,9 +61,15 @@ class ContentPublisher:
         *,
         db_path: str | Path | None = None,
         requester: RequestFn | None = None,
+        poll_interval_seconds: float = 5.0,
+        poll_timeout_seconds: float = 30.0,
+        sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.db_path = Path(db_path) if db_path else _publisher_db_path()
         self.requester = requester
+        self.poll_interval_seconds = poll_interval_seconds
+        self.poll_timeout_seconds = poll_timeout_seconds
+        self.sleep_fn = sleep_fn
 
     async def initialize(self) -> None:
         async with aiosqlite.connect(self.db_path) as conn:
@@ -88,7 +95,10 @@ class ContentPublisher:
 
         url = f"{GRAPH_BASE_URL.rstrip('/')}/{GRAPH_VERSION}/{path.lstrip('/')}"
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.request(method.upper(), url, data=payload)
+            if method.upper() == "GET":
+                response = await client.request(method.upper(), url, params=payload)
+            else:
+                response = await client.request(method.upper(), url, data=payload)
             response.raise_for_status()
             if not response.content:
                 return {}
@@ -124,6 +134,26 @@ class ContentPublisher:
             payload["image_url"] = media_url
         return payload
 
+    async def _wait_until_media_ready(self, creation_id: str, access_token: str) -> None:
+        interval = max(self.poll_interval_seconds, 0.001)
+        attempts = max(1, int(self.poll_timeout_seconds / interval))
+        for attempt in range(attempts):
+            status_payload = {
+                "fields": "status_code",
+                "access_token": access_token,
+            }
+            status_response = await self._request("GET", creation_id, status_payload) or {}
+            status_code = str(status_response.get("status_code") or "").strip().upper()
+            if status_code == "FINISHED":
+                return
+            if status_code == "ERROR":
+                raise RuntimeError(f"Instagram media container {creation_id} returned ERROR")
+            if attempt < attempts - 1:
+                await self.sleep_fn(interval)
+        raise RuntimeError(
+            f"Instagram media container {creation_id} was not ready within {self.poll_timeout_seconds:.0f}s"
+        )
+
     async def publish_instagram(self, post: ContentPost) -> str:
         account_id = self._account_id()
         access_token = self._access_token()
@@ -136,6 +166,8 @@ class ContentPublisher:
         creation_id = str(created.get("id") or "").strip()
         if not creation_id:
             raise RuntimeError("Instagram media creation did not return an id")
+
+        await self._wait_until_media_ready(creation_id, access_token)
 
         publish_payload = {"creation_id": creation_id, "access_token": access_token}
         published = await self._request("POST", f"{account_id}/media_publish", publish_payload) or {}

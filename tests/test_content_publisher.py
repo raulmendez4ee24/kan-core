@@ -43,9 +43,16 @@ def test_publish_instagram_handles_image_reel_and_story(monkeypatch, tmp_path: P
         calls.append((method, path, payload))
         if path.endswith("/media"):
             return {"id": f"creation-{len(calls)}"}
+        if method == "GET":
+            return {"status_code": "FINISHED"}
         return {"id": f"media-{len(calls)}"}
 
-    publisher = ContentPublisher(db_path=tmp_path / "publisher.sqlite3", requester=_request)
+    publisher = ContentPublisher(
+        db_path=tmp_path / "publisher.sqlite3",
+        requester=_request,
+        poll_interval_seconds=0.01,
+        poll_timeout_seconds=0.05,
+    )
 
     async def _run() -> list[str]:
         return [
@@ -56,14 +63,19 @@ def test_publish_instagram_handles_image_reel_and_story(monkeypatch, tmp_path: P
 
     media_ids = asyncio.run(_run())
 
-    assert media_ids == ["media-2", "media-4", "media-6"]
+    assert media_ids == ["media-3", "media-6", "media-9"]
     image_creation = calls[0]
-    reel_creation = calls[2]
-    story_creation = calls[4]
+    image_status = calls[1]
+    image_publish = calls[2]
+    reel_creation = calls[3]
+    story_creation = calls[6]
 
     assert image_creation[1] == "17890000000000000/media"
     assert image_creation[2]["image_url"] == "https://cdn.example.com/image.jpg"
     assert image_creation[2]["caption"] == "Caption"
+    assert image_status[0] == "GET"
+    assert image_status[1] == "creation-1"
+    assert image_publish[1] == "17890000000000000/media_publish"
     assert reel_creation[2]["media_type"] == "REELS"
     assert reel_creation[2]["video_url"] == "https://cdn.example.com/video.mp4"
     assert story_creation[2]["media_type"] == "STORIES"
@@ -78,9 +90,16 @@ def test_schedule_post_and_check_scheduled_posts_updates_status(monkeypatch, tmp
     async def _request(method: str, path: str, payload: dict[str, object]):
         if path.endswith("/media"):
             return {"id": "creation-1"}
+        if method == "GET":
+            return {"status_code": "FINISHED"}
         return {"id": "media-1"}
 
-    publisher = ContentPublisher(db_path=tmp_path / "publisher.sqlite3", requester=_request)
+    publisher = ContentPublisher(
+        db_path=tmp_path / "publisher.sqlite3",
+        requester=_request,
+        poll_interval_seconds=0.01,
+        poll_timeout_seconds=0.05,
+    )
 
     async def _run() -> None:
         scheduled = await publisher.schedule_post(
@@ -110,7 +129,12 @@ def test_check_scheduled_posts_marks_failed_when_publish_errors(monkeypatch, tmp
     async def _request(method: str, path: str, payload: dict[str, object]):
         raise RuntimeError("graph down")
 
-    publisher = ContentPublisher(db_path=tmp_path / "publisher.sqlite3", requester=_request)
+    publisher = ContentPublisher(
+        db_path=tmp_path / "publisher.sqlite3",
+        requester=_request,
+        poll_interval_seconds=0.01,
+        poll_timeout_seconds=0.05,
+    )
 
     async def _run() -> None:
         await publisher.schedule_post(
@@ -162,9 +186,16 @@ def test_content_scheduled_endpoint_lists_scheduled_and_published(monkeypatch, t
     async def _request(method: str, path: str, payload: dict[str, object]):
         if path.endswith("/media"):
             return {"id": "creation-1"}
+        if method == "GET":
+            return {"status_code": "FINISHED"}
         return {"id": "media-1"}
 
-    publisher = ContentPublisher(db_path=tmp_path / "publisher.sqlite3", requester=_request)
+    publisher = ContentPublisher(
+        db_path=tmp_path / "publisher.sqlite3",
+        requester=_request,
+        poll_interval_seconds=0.01,
+        poll_timeout_seconds=0.05,
+    )
 
     async def _seed() -> None:
         await publisher.schedule_post(
@@ -190,6 +221,77 @@ def test_content_scheduled_endpoint_lists_scheduled_and_published(monkeypatch, t
     assert payload["count"] == 2
     statuses = {item["status"] for item in payload["items"]}
     assert statuses == {"scheduled", "published"}
+
+
+def test_publish_instagram_raises_when_container_reports_error(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("CONTENT_PUBLISHER_DB_PATH", str(tmp_path / "publisher.sqlite3"))
+    monkeypatch.setenv("INSTAGRAM_ACCOUNT_ID", "17890000000000000")
+    monkeypatch.setenv("META_ACCESS_TOKEN", "meta-token")
+
+    async def _request(method: str, path: str, payload: dict[str, object]):
+        if path.endswith("/media"):
+            return {"id": "creation-error"}
+        if method == "GET":
+            return {"status_code": "ERROR"}
+        return {"id": "media-1"}
+
+    publisher = ContentPublisher(
+        db_path=tmp_path / "publisher.sqlite3",
+        requester=_request,
+        poll_interval_seconds=0.01,
+        poll_timeout_seconds=0.05,
+    )
+
+    async def _run() -> None:
+        await publisher.publish_instagram(
+            _post(post_format="static", media_url="https://cdn.example.com/image.jpg")
+        )
+
+    try:
+        asyncio.run(_run())
+    except RuntimeError as exc:
+        assert "returned ERROR" in str(exc)
+    else:
+        raise AssertionError("publish_instagram should raise when status_code is ERROR")
+
+
+def test_publish_instagram_raises_on_container_timeout(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("CONTENT_PUBLISHER_DB_PATH", str(tmp_path / "publisher.sqlite3"))
+    monkeypatch.setenv("INSTAGRAM_ACCOUNT_ID", "17890000000000000")
+    monkeypatch.setenv("META_ACCESS_TOKEN", "meta-token")
+
+    sleep_calls: list[float] = []
+
+    async def _request(method: str, path: str, payload: dict[str, object]):
+        if path.endswith("/media"):
+            return {"id": "creation-timeout"}
+        if method == "GET":
+            return {"status_code": "IN_PROGRESS"}
+        return {"id": "media-1"}
+
+    async def _sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    publisher = ContentPublisher(
+        db_path=tmp_path / "publisher.sqlite3",
+        requester=_request,
+        poll_interval_seconds=0.01,
+        poll_timeout_seconds=0.03,
+        sleep_fn=_sleep,
+    )
+
+    async def _run() -> None:
+        await publisher.publish_instagram(
+            _post(post_format="static", media_url="https://cdn.example.com/image.jpg")
+        )
+
+    try:
+        asyncio.run(_run())
+    except RuntimeError as exc:
+        assert "was not ready within" in str(exc)
+        assert sleep_calls
+    else:
+        raise AssertionError("publish_instagram should raise on timeout")
 
 
 def test_publish_to_tiktok_stub() -> None:
