@@ -175,3 +175,11 @@ def test_ready_prompts_contains_expected_common_post_types() -> None:
     assert len(READY_PROMPTS) == 12
     for key in ["lead_capture", "offer_launch", "testimonial", "workflow_upgrade", "whatsapp_conversion"]:
         assert key in READY_PROMPTS
+
+
+def test_font_cache_paths_use_tmp_directory() -> None:
+    manager = AssetManager()
+    sora_path = manager._font_cache_path("Sora-Bold.ttf")
+    mono_path = manager._font_cache_path("JetBrains-Mono-Regular.ttf")
+    assert str(sora_path).endswith("/Sora-Bold.ttf")
+    assert str(mono_path).endswith("/JetBrains-Mono-Regular.ttf")

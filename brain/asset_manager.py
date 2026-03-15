@@ -23,9 +23,11 @@ _ACCENT = "#e94560"
 _TEXT = "#f5f7ff"
 _MUTED = "#b8bfd6"
 _DEFAULT_GEMINI_IMAGE_MODEL = "models/gemini-3-pro-image-preview"
-_SORA_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/sora/static/Sora-Bold.ttf"
+_SORA_BOLD_URL = "https://github.com/google/fonts/raw/main/ofl/sora/Sora%5Bwght%5D.ttf"
+_JETBRAINS_MONO_URL = "https://github.com/JetBrains/JetBrainsMono/raw/master/fonts/ttf/JetBrainsMono-Regular.ttf"
 _SORA_FONT_NAME = "Sora-Bold.ttf"
-_SORA_FONT_DOWNLOAD_ATTEMPTED = False
+_JETBRAINS_MONO_NAME = "JetBrains-Mono-Regular.ttf"
+_FONT_DOWNLOAD_ATTEMPTED: set[str] = set()
 
 BRAND: dict[str, Any] = {
     "name": "KAN Logic",
@@ -298,27 +300,30 @@ class AssetManager:
             include_logo=include_logo,
         )
 
-    def _font_dir(self) -> Path:
-        path = Path(__file__).resolve().parents[1] / "data" / "fonts"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+    def _font_cache_path(self, filename: str) -> Path:
+        return Path(gettempdir()) / filename
 
-    def _ensure_sora_bold_font(self) -> Path | None:
-        global _SORA_FONT_DOWNLOAD_ATTEMPTED
-        font_path = self._font_dir() / _SORA_FONT_NAME
+    def _ensure_downloaded_font(self, *, url: str, filename: str) -> Path | None:
+        font_path = self._font_cache_path(filename)
         if font_path.exists():
             return font_path
-        if _SORA_FONT_DOWNLOAD_ATTEMPTED:
+        if filename in _FONT_DOWNLOAD_ATTEMPTED:
             return None
-        _SORA_FONT_DOWNLOAD_ATTEMPTED = True
+        _FONT_DOWNLOAD_ATTEMPTED.add(filename)
         try:
-            response = httpx.get(_SORA_BOLD_URL, timeout=10.0)
+            response = httpx.get(url, timeout=10.0, follow_redirects=True)
             response.raise_for_status()
             font_path.write_bytes(response.content)
             return font_path
         except Exception:
-            logger.exception("Could not download Sora Bold font; using fallback font")
+            logger.exception("Could not download font %s; using fallback font", filename)
             return None
+
+    def _ensure_sora_bold_font(self) -> Path | None:
+        return self._ensure_downloaded_font(url=_SORA_BOLD_URL, filename=_SORA_FONT_NAME)
+
+    def _ensure_jetbrains_mono_font(self) -> Path | None:
+        return self._ensure_downloaded_font(url=_JETBRAINS_MONO_URL, filename=_JETBRAINS_MONO_NAME)
 
     def _load_font(self, size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         font_path = self._ensure_sora_bold_font() if bold else None
@@ -331,6 +336,25 @@ class AssetManager:
             "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
             "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
             "/System/Library/Fonts/Supplemental/Helvetica.ttc",
+        ]
+        for candidate in fallback_candidates:
+            try:
+                return ImageFont.truetype(candidate, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    def _load_mono_font(self, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+        font_path = self._ensure_jetbrains_mono_font()
+        if font_path is not None:
+            try:
+                return ImageFont.truetype(str(font_path), size)
+            except Exception:
+                logger.exception("Could not load downloaded JetBrains Mono font")
+        fallback_candidates = [
+            "DejaVuSansMono.ttf",
+            "/System/Library/Fonts/Supplemental/Courier New.ttf",
+            "/System/Library/Fonts/Supplemental/Menlo.ttc",
         ]
         for candidate in fallback_candidates:
             try:
@@ -362,7 +386,7 @@ class AssetManager:
         draw = ImageDraw.Draw(image)
         width, height = image.size
         title_font = self._load_font(78, bold=True)
-        topic_font = self._load_font(34, bold=False)
+        topic_font = self._load_mono_font(28)
         brand_font = self._load_font(28, bold=True)
 
         panel = (64, 84, width - 64, 510)
