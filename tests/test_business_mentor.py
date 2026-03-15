@@ -69,6 +69,11 @@ def test_business_mentor_daily_briefing_sends_whatsapp(monkeypatch, tmp_path: Pa
             account_flags=["fatigue"],
             summary="1 campaña con fatiga y 1 oportunidad de escala.",
         ))
+        mentor.collect_bookings_metrics = lambda: asyncio.sleep(0, result=BookingSnapshot(  # type: ignore[method-assign]
+            scheduled_today=1,
+            next_booking_at=(now + timedelta(hours=3)).isoformat(),
+            bookings_today=[{"booking_id": "booking-mentor-1"}],
+        ))
 
         briefing = await mentor.daily_briefing()
         assert briefing.revenue.month_revenue_mxn == 15000
