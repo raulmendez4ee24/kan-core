@@ -13,5 +13,6 @@ aiosqlite>=0.20
 apscheduler>=3.10
 pytrends>=4.9
 google-genai>=1.0
+Pillow>=10.0
 
 tenacity>=8.2,<10
