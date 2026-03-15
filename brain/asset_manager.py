@@ -607,3 +607,77 @@ class AssetManager:
                 image_path=output,
             )
         return await self.upload_image(str(output))
+
+    async def generate_post_image_bytes(
+        self,
+        *,
+        topic: str,
+        hook_text: str,
+        style_preset: str = "premium",
+        format: str = "square",
+        vertical: str | None = None,
+        content_type: str = "general",
+        include_logo: bool = True,
+        asset_id: str | None = None,
+        custom_prompt: str | None = None,
+    ) -> Any:
+        """
+        Genera imagen y retorna ImageResult(bytes, prompt_used) sin subir a Cloudinary.
+        Usado por el QC pipeline para revisar antes de publicar.
+        """
+        from brain.agents.quality_control_agent import ImageResult
+
+        output_id = str(
+            asset_id
+            or hashlib.sha1(
+                f"{topic}|{hook_text}|{style_preset}|{format}|{vertical}|{content_type}|{include_logo}".encode()
+            ).hexdigest()[:16]
+        ).strip()
+        output = Path(gettempdir()) / f"{output_id}.jpg"
+        effective_topic = custom_prompt or topic
+
+        try:
+            await self._generate_with_gemini(
+                topic=effective_topic,
+                hook_text=hook_text,
+                style_preset=style_preset,
+                format=format,
+                vertical=vertical,
+                content_type=content_type,
+                include_logo=include_logo,
+                output=output,
+            )
+        except Exception:
+            logger.exception("Gemini generation failed for QC pipeline; falling back to Pillow")
+            self._render_with_pillow(output)
+
+        try:
+            self._overlay_text_and_wordmark(
+                hook_text=hook_text,
+                topic=topic,
+                include_logo=include_logo,
+                image_path=output,
+            )
+        except Exception:
+            logger.exception("Overlay failed in QC pipeline; rebuilding with Pillow")
+            self._render_with_pillow(output)
+            self._overlay_text_and_wordmark(
+                hook_text=hook_text,
+                topic=topic,
+                include_logo=include_logo,
+                image_path=output,
+            )
+
+        return ImageResult(image=output.read_bytes(), prompt_used=effective_topic, asset_id=output_id)
+
+    async def upload_image_bytes(self, image: bytes, asset_id: str) -> str:
+        """Sube bytes directamente a Cloudinary. Usado por el QC pipeline post-aprobación."""
+        from tempfile import NamedTemporaryFile
+
+        with NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp.write(image)
+            tmp_path = tmp.name
+        try:
+            return await self.upload_image(tmp_path)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
