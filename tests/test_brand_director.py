@@ -53,6 +53,7 @@ def test_brand_audit_builds_brand_bible(tmp_path: Path) -> None:
 def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch) -> None:
     sent_messages: list[str] = []
     scheduled: list[tuple[str, str, str | None]] = []
+    generated_assets: list[dict[str, object]] = []
 
     async def _fetch(_url: str) -> str:
         return """
@@ -76,8 +77,9 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
             return {"scheduled": True}
 
     class _StubAssetManager:
-        async def generate_post_image(self, post):
-            return f"https://cdn.example.com/{post.post_id}.jpg"
+        async def generate_post_image(self, **kwargs):
+            generated_assets.append(kwargs)
+            return f"https://cdn.example.com/{kwargs['asset_id']}.jpg"
 
     monkeypatch.setenv("RAUL_WHATSAPP_TO", "+5215512345678")
     monkeypatch.setenv("YCLOUD_WHATSAPP_FROM", "+5215599999999")
@@ -104,6 +106,12 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
         assert post.media_url == "https://cdn.example.com/2026-03-16-1.jpg"
         assert sent_messages
         assert scheduled
+        assert generated_assets
+        assert generated_assets[0]["topic"] == post.topic
+        assert generated_assets[0]["hook_text"] == post.hook
+        assert generated_assets[0]["style_preset"] == "premium"
+        assert post.pillar == "educacion"
+        assert generated_assets[0]["content_type"] == "educational_tip"
         assert scheduled[0][2] == "https://cdn.example.com/2026-03-16-1.jpg"
         assert "Post de hoy" in sent_messages[0]
 

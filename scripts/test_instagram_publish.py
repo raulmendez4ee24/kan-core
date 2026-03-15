@@ -47,7 +47,16 @@ async def _run() -> int:
     publisher = ContentPublisher()
 
     try:
-        public_image_url = await asset_manager.generate_post_image(post)
+        public_image_url = await asset_manager.generate_post_image(
+            topic=post.topic,
+            hook_text=post.hook,
+            style_preset="premium",
+            format="square",
+            vertical=post.vertical,
+            content_type="offer_launch",
+            include_logo=True,
+            asset_id=post.post_id,
+        )
         print(f"public_image_url={public_image_url}")
         post = post.model_copy(update={"media_url": public_image_url})
         media_id = await publisher.publish_instagram(post)

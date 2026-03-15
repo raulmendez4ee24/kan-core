@@ -76,6 +76,7 @@ class ContentPost(BaseModel):
     day_index: int
     platform: str
     pillar: str
+    vertical: str | None = None
     format: str
     topic: str
     hook: str
@@ -231,6 +232,18 @@ class BrandDirector:
             self.asset_manager = AssetManager()
         else:
             self.asset_manager = asset_manager
+
+    def _content_type_for_post(self, post: ContentPost) -> str:
+        mapping = {
+            "educacion": "educational_tip",
+            "prueba_social": "testimonial",
+            "oferta": "offer_launch",
+            "behind_the_scenes": "workflow_upgrade",
+            "objeciones": "objection_breaker",
+            "casos_de_uso": "case_study",
+            "autoridad": "brand_authority",
+        }
+        return mapping.get(str(post.pillar or "").strip(), "general")
 
     async def initialize(self) -> None:
         async with aiosqlite.connect(self.db_path) as conn:
@@ -567,7 +580,16 @@ class BrandDirector:
         )
         await self._send_to_raul(message)
         if post.platform == "instagram":
-            media_url = await self.asset_manager.generate_post_image(post)
+            media_url = await self.asset_manager.generate_post_image(
+                topic=post.topic,
+                hook_text=post.hook,
+                style_preset="premium",
+                format="square",
+                vertical=post.vertical,
+                content_type=self._content_type_for_post(post),
+                include_logo=True,
+                asset_id=post.post_id,
+            )
             post = post.model_copy(update={"media_url": media_url})
             await self.content_publisher.schedule_post(
                 post,
