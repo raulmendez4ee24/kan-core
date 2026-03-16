@@ -5,6 +5,7 @@ import hashlib
 import os
 from typing import Any, Iterable
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from tools.lead_generator import search_places
@@ -411,6 +412,53 @@ class HunterOperator:
             value_points=value_points,
         )
 
+    async def _generate_outreach_body(
+        self,
+        opportunity: OpportunityScore,
+        offer: Offer,
+        channel: str,
+    ) -> str:
+        from brain.marketing_skills import load_skill
+
+        api_key = str(os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not configured")
+        skill_context = load_skill("cold_email")
+        system_prompt = (
+            "Eres un especialista en outreach B2B para una agencia de automatizacion y chatbots. "
+            "Escribe mensajes de prospección cortos, personalizados y orientados a generar respuesta. "
+            "Responde SOLO con el cuerpo del mensaje, sin asunto ni firma."
+            + (f"\n\n{skill_context}" if skill_context else "")
+        )
+        user_msg = (
+            f"Canal: {channel}\n"
+            f"Negocio: {opportunity.business_name}\n"
+            f"Vertical: {opportunity.vertical}\n"
+            f"Oferta: {offer.package_name} (desde ${offer.setup_price_mxn:,} MXN setup)\n"
+            f"Puntos de valor: {', '.join(offer.value_points[:3])}\n\n"
+            "Escribe el mensaje de outreach."
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+                    "max_tokens": 400,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_msg}],
+                },
+            )
+            response.raise_for_status()
+            blocks = response.json().get("content") or []
+            return "\n".join(
+                str(b.get("text") or "").strip() for b in blocks if isinstance(b, dict)
+            ).strip()
+
     async def generate_outreach(
         self,
         opportunity: OpportunityScore,
@@ -423,6 +471,12 @@ class HunterOperator:
             f"captar y atender mejor prospectos. Yo preparé una propuesta breve de {offer.package_name} "
             f"pensada para {opportunity.vertical}. ¿Te comparto cómo funcionaría?"
         )
+        try:
+            generated = await self._generate_outreach_body(opportunity, offer, channel)
+            if generated:
+                body = generated
+        except Exception:
+            pass  # Claude unavailable — use static fallback
         try:
             from brain.humanizer import humanize_text
 

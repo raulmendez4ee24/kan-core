@@ -364,9 +364,18 @@ class OfferForge:
         return fresh[:3]
 
     async def _call_claude(self, prompt: str) -> str:
+        from brain.marketing_skills import load_skills
+
         api_key = str(os.getenv("ANTHROPIC_API_KEY") or "").strip()
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY not configured")
+        skill_context = load_skills("copywriting", "page_cro", "ad_creative", "pricing_strategy")
+        system_prompt = (
+            "Actua como un director de ofertas para una agencia de automatizacion, "
+            "chatbots, paginas web y ventas por WhatsApp. Responde unicamente JSON valido. "
+            "Debes ser directo, comercial, especifico y orientado a cerrar."
+            + skill_context
+        )
         async with httpx.AsyncClient(timeout=45.0) as client:
             response = await client.post(
                 "https://api.anthropic.com/v1/messages",
@@ -378,11 +387,7 @@ class OfferForge:
                 json={
                     "model": self.model,
                     "max_tokens": 1800,
-                    "system": (
-                        "Actua como un director de ofertas para una agencia de automatizacion, "
-                        "chatbots, paginas web y ventas por WhatsApp. Responde unicamente JSON valido. "
-                        "Debes ser directo, comercial, especifico y orientado a cerrar."
-                    ),
+                    "system": system_prompt,
                     "messages": [{"role": "user", "content": prompt}],
                 },
             )

@@ -435,10 +435,25 @@ class BrandDirector:
             f"tipografía {brand_bible.visual_identity.fonts[0] if brand_bible.visual_identity.fonts else 'consistente'}, "
             f"y estilo {brand_bible.visual_identity.style}."
         )
+        try:
+            from brain.marketing_skills import load_skill
+
+            _social_skill = load_skill("social_content")
+        except Exception:
+            _social_skill = ""
         caption = (
             f"{hook} {brand_bible.identity.why} "
             f"{cta}"
         )
+        # Enrich the writing guide with social content best practices when skill is available
+        if _social_skill:
+            full_script = (
+                f"{hook}\n\n"
+                f"Contexto: {brand_bible.identity.what}\n"
+                f"Desarrollo: explica el problema, muestra el contraste antes/después y aterriza una acción concreta.\n"
+                f"Cierre: {cta}\n\n"
+                f"---\nGuía de contenido social:\n{_social_skill[:600]}"
+            )
         hashtags = [
             "#marketing",
             "#ventas",

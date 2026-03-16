@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 import aiosqlite
+import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("kan_core.closer")
@@ -559,6 +560,53 @@ class ObjectionHandler:
             await db.close()
         return updated
 
+    async def _generate_ai_objection_response(
+        self,
+        objection_type: str,
+        vertical: str,
+    ) -> str | None:
+        """Generate a context-aware objection response via Claude + sales_enablement skill."""
+        from brain.marketing_skills import load_skill
+
+        api_key = str(os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key:
+            return None
+        skill_context = load_skill("sales_enablement")
+        system_prompt = (
+            "Eres un closer B2B especializado en vender automatizacion, chatbots y páginas web. "
+            "Responde objeciones de manera directa, empática y orientada a cerrar. "
+            "Sé conciso (2-3 oraciones máximo). Responde solo el texto del mensaje, sin explicaciones."
+            + (f"\n\n{skill_context}" if skill_context else "")
+        )
+        user_msg = (
+            f"Objeción: {objection_type}\n"
+            f"Vertical del cliente: {vertical}\n\n"
+            "Escribe la mejor respuesta para manejar esta objeción."
+        )
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+                        "max_tokens": 200,
+                        "system": system_prompt,
+                        "messages": [{"role": "user", "content": user_msg}],
+                    },
+                )
+                response.raise_for_status()
+                blocks = response.json().get("content") or []
+                return "\n".join(
+                    str(b.get("text") or "").strip() for b in blocks if isinstance(b, dict)
+                ).strip() or None
+        except Exception:
+            return None
+
     async def get_best_response(
         self,
         objection_type: str,
@@ -603,6 +651,13 @@ class ObjectionHandler:
                 text = _OBJECTION_FALLBACKS.get(obj_norm, _OBJECTION_FALLBACK_DEFAULT)
                 rate = 0.0
                 is_fallback = True
+                # Attempt AI-powered response with sales_enablement skill
+                try:
+                    ai_text = await self._generate_ai_objection_response(obj_norm, vert_norm)
+                    if ai_text:
+                        text = ai_text
+                except Exception:
+                    pass  # keep static fallback on any error
 
             # Log usage so conversion rates can be updated later
             await db.execute(
