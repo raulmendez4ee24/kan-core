@@ -345,9 +345,26 @@ class BusinessMentor:
     async def _send_to_raul(self, text: str) -> None:
         to_number = str(os.getenv("RAUL_WHATSAPP_TO") or "").strip()
         from_number = str(os.getenv("YCLOUD_WHATSAPP_FROM") or "").strip()
+        preview = str(text or "").strip().replace("\n", " ")[:180]
+        logger.info(
+            "BusinessMentor WhatsApp env snapshot: RAUL_WHATSAPP_TO=%r YCLOUD_WHATSAPP_FROM=%r text_len=%d preview=%r",
+            to_number,
+            from_number,
+            len(str(text or "")),
+            preview,
+        )
         if not to_number or not from_number or not str(text or "").strip():
+            logger.warning(
+                "BusinessMentor WhatsApp send skipped: missing to/from/text (to=%r from=%r text_present=%s)",
+                to_number,
+                from_number,
+                bool(str(text or "").strip()),
+            )
             return
-        await self.whatsapp_sender(from_number=from_number, to=to_number, text=text)
+        response = await self.whatsapp_sender(from_number=from_number, to=to_number, text=text)
+        logger.info("BusinessMentor WhatsApp send response: %s", response)
+        if not response:
+            logger.warning("BusinessMentor WhatsApp send returned empty response for to=%r from=%r", to_number, from_number)
 
     def _build_top_priorities(
         self,
@@ -617,6 +634,7 @@ class BusinessMentor:
         clean_question = str(question or "").strip()
         if not clean_question:
             raise ValueError("question is required")
+        logger.info("BusinessMentor answer_question called: %r", clean_question[:240])
         context = await self._load_context()
         prompt = (
             "Contexto del negocio:\n"
@@ -627,7 +645,10 @@ class BusinessMentor:
         try:
             answer = await self._call_claude(prompt)
             if answer:
+                logger.info("BusinessMentor answer_question returning Claude answer length=%d", len(answer))
                 return answer
         except Exception:
             logger.exception("BusinessMentor Claude call failed; using fallback answer")
-        return self._fallback_answer(clean_question, context)
+        fallback = self._fallback_answer(clean_question, context)
+        logger.info("BusinessMentor answer_question returning fallback length=%d", len(fallback))
+        return fallback

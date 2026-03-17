@@ -1,15 +1,30 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime
 import hashlib
+import json
+import logging
 import os
+from pathlib import Path
+import re
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
+import aiosqlite
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from tools.lead_generator import search_places
+from tools.ycloud_client import send_ycloud_whatsapp_template_message
 
+logger = logging.getLogger("kan_core.revenue.hunter")
+MX_TZ = ZoneInfo("America/Mexico_City")
+_DEFAULT_CLINIC_TEMPLATE = "outbound_prospecto_v1"
+_DEFAULT_CLINIC_OFFER_NAME = "Web + Chatbot para Clínicas"
+_DEFAULT_CLINIC_PAIN_LINE = (
+    "Hoy puedes responder más rápido y agendar más citas por WhatsApp sin depender de contestar manualmente."
+)
 
 class OpportunityInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -74,6 +89,15 @@ class HuntReport(BaseModel):
     offers: list[Offer] = Field(default_factory=list)
     outreach_messages: list[OutreachMessage] = Field(default_factory=list)
     product_gaps: list[ProductIdea] = Field(default_factory=list)
+
+
+class OutboundSendResult(BaseModel):
+    business_name: str
+    phone_number: str
+    status: str
+    template_name: str
+    reason: str | None = None
+    response: dict[str, Any] = Field(default_factory=dict)
 
 
 def _bounded(value: float, *, minimum: float = 0.0, maximum: float = 100.0) -> float:
@@ -188,6 +212,266 @@ def _build_place_opportunity(default_city: str, vertical: str, row: dict[str, An
 
 
 class HunterOperator:
+    @staticmethod
+    def _now_local() -> datetime:
+        return datetime.now(MX_TZ)
+
+    @classmethod
+    def is_business_hours(cls, when: datetime | None = None) -> bool:
+        current = when.astimezone(MX_TZ) if when else cls._now_local()
+        if current.weekday() > 5:
+            return False
+        start_hour = 9
+        end_hour = 18
+        current_minutes = current.hour * 60 + current.minute
+        return (start_hour * 60) <= current_minutes < (end_hour * 60)
+
+    @staticmethod
+    def _outbound_db_path() -> Path:
+        override = os.getenv("HUNTER_OUTBOUND_DB_PATH")
+        path = Path(override).expanduser() if override else Path("data/hunter_outbound.sqlite3")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @classmethod
+    async def _connect_outbound_db(cls) -> aiosqlite.Connection:
+        db = await aiosqlite.connect(cls._outbound_db_path())
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA journal_mode = WAL;")
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hunter_outbound_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                normalized_phone TEXT NOT NULL,
+                business_name TEXT NOT NULL,
+                template_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason TEXT,
+                place_id TEXT,
+                payload_json TEXT,
+                response_json TEXT,
+                created_at TEXT NOT NULL,
+                sent_at TEXT,
+                sent_date_local TEXT
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_hunter_outbound_phone
+            ON hunter_outbound_log(normalized_phone, status)
+            """
+        )
+        await db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_hunter_outbound_sent_date
+            ON hunter_outbound_log(sent_date_local, status)
+            """
+        )
+        await db.commit()
+        return db
+
+    @staticmethod
+    def _normalize_phone(phone: str | None) -> str:
+        raw = str(phone or "").strip()
+        if not raw:
+            return ""
+        digits = re.sub(r"\D+", "", raw)
+        if not digits:
+            return ""
+        if raw.startswith("+"):
+            return f"+{digits}"
+        if len(digits) == 10:
+            return f"+52{digits}"
+        if len(digits) == 12 and digits.startswith("52"):
+            return f"+{digits}"
+        if len(digits) == 11 and digits.startswith("1"):
+            return f"+{digits}"
+        if len(digits) >= 11:
+            return f"+{digits}"
+        return ""
+
+    async def _sent_record_for_phone(self, normalized_phone: str) -> dict[str, Any] | None:
+        db = await self._connect_outbound_db()
+        try:
+            cursor = await db.execute(
+                """
+                SELECT normalized_phone, business_name, template_name, status, reason, sent_at
+                FROM hunter_outbound_log
+                WHERE normalized_phone = ? AND status = 'sent'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (normalized_phone,),
+            )
+            row = await cursor.fetchone()
+        finally:
+            await db.close()
+        return dict(row) if row else None
+
+    async def _queued_record_for_phone(self, normalized_phone: str) -> dict[str, Any] | None:
+        db = await self._connect_outbound_db()
+        try:
+            cursor = await db.execute(
+                """
+                SELECT id, normalized_phone, business_name, template_name, status, reason, payload_json
+                FROM hunter_outbound_log
+                WHERE normalized_phone = ? AND status = 'queued'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (normalized_phone,),
+            )
+            row = await cursor.fetchone()
+        finally:
+            await db.close()
+        return dict(row) if row else None
+
+    async def _sent_today_count(self) -> int:
+        local_day = datetime.now(MX_TZ).date().isoformat()
+        db = await self._connect_outbound_db()
+        try:
+            cursor = await db.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM hunter_outbound_log
+                WHERE status = 'sent' AND sent_date_local = ?
+                """,
+                (local_day,),
+            )
+            row = await cursor.fetchone()
+        finally:
+            await db.close()
+        return int(row["total"]) if row else 0
+
+    async def _log_outbound_result(
+        self,
+        *,
+        normalized_phone: str,
+        business_name: str,
+        template_name: str,
+        status: str,
+        reason: str | None,
+        place_id: str,
+        payload: dict[str, Any],
+        response: dict[str, Any] | None,
+        sent: bool,
+    ) -> None:
+        created_at = datetime.now(MX_TZ).isoformat()
+        sent_at = created_at if sent else None
+        sent_date_local = datetime.now(MX_TZ).date().isoformat() if sent else None
+        db = await self._connect_outbound_db()
+        try:
+            await db.execute(
+                """
+                INSERT INTO hunter_outbound_log (
+                    normalized_phone,
+                    business_name,
+                    template_name,
+                    status,
+                    reason,
+                    place_id,
+                    payload_json,
+                    response_json,
+                    created_at,
+                    sent_at,
+                    sent_date_local
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalized_phone,
+                    business_name,
+                    template_name,
+                    status,
+                    reason,
+                    place_id,
+                    json_dumps(payload),
+                    json_dumps(response or {}),
+                    created_at,
+                    sent_at,
+                    sent_date_local,
+                ),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+    async def _mark_queue_entry_sent(
+        self,
+        queue_id: int,
+        *,
+        response: dict[str, Any] | None,
+        reason: str | None = None,
+    ) -> None:
+        sent_at = self._now_local().isoformat()
+        sent_date_local = self._now_local().date().isoformat()
+        db = await self._connect_outbound_db()
+        try:
+            await db.execute(
+                """
+                UPDATE hunter_outbound_log
+                SET status = 'sent',
+                    reason = ?,
+                    response_json = ?,
+                    sent_at = ?,
+                    sent_date_local = ?
+                WHERE id = ?
+                """,
+                (
+                    reason,
+                    json_dumps(response or {}),
+                    sent_at,
+                    sent_date_local,
+                    queue_id,
+                ),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+    async def _mark_queue_entry_failed(
+        self,
+        queue_id: int,
+        *,
+        reason: str,
+        response: dict[str, Any] | None,
+    ) -> None:
+        db = await self._connect_outbound_db()
+        try:
+            await db.execute(
+                """
+                UPDATE hunter_outbound_log
+                SET status = 'failed',
+                    reason = ?,
+                    response_json = ?
+                WHERE id = ?
+                """,
+                (
+                    reason,
+                    json_dumps(response or {}),
+                    queue_id,
+                ),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+    async def _queued_rows(self) -> list[aiosqlite.Row]:
+        db = await self._connect_outbound_db()
+        try:
+            cursor = await db.execute(
+                """
+                SELECT id, normalized_phone, business_name, template_name, payload_json
+                FROM hunter_outbound_log
+                WHERE status = 'queued'
+                ORDER BY id ASC
+                """
+            )
+            rows = await cursor.fetchall()
+        finally:
+            await db.close()
+        return list(rows)
+
     def _coerce_opportunity(
         self,
         row: OpportunityInput | dict[str, Any],
@@ -486,6 +770,277 @@ class HunterOperator:
         cta = "Responder para recibir propuesta"
         return OutreachMessage(channel=channel, subject=subject, body=body, cta=cta)
 
+    async def send_clinic_outbound_message(
+        self,
+        opportunity: OpportunityScore,
+        *,
+        template_name: str = _DEFAULT_CLINIC_TEMPLATE,
+        offer_name: str = _DEFAULT_CLINIC_OFFER_NAME,
+        pain_line: str = _DEFAULT_CLINIC_PAIN_LINE,
+        daily_limit: int = 10,
+        score_threshold: float = 75.0,
+    ) -> OutboundSendResult:
+        metadata = dict(opportunity.metadata or {})
+        raw_phone = (
+            metadata.get("phone")
+            or metadata.get("phoneNumber")
+            or metadata.get("displayPhoneNumber")
+            or ""
+        )
+        normalized_phone = self._normalize_phone(str(raw_phone))
+        if float(opportunity.score) <= float(score_threshold):
+            result = OutboundSendResult(
+                business_name=opportunity.business_name,
+                phone_number=normalized_phone,
+                status="skipped_below_threshold",
+                template_name=template_name,
+                reason=f"score={opportunity.score} <= {score_threshold}",
+            )
+            await self._log_outbound_result(
+                normalized_phone=normalized_phone,
+                business_name=opportunity.business_name,
+                template_name=template_name,
+                status=result.status,
+                reason=result.reason,
+                place_id=str(metadata.get("place_id") or ""),
+                payload={},
+                response={},
+                sent=False,
+            )
+            return result
+        if not normalized_phone:
+            result = OutboundSendResult(
+                business_name=opportunity.business_name,
+                phone_number="",
+                status="skipped_missing_phone",
+                template_name=template_name,
+                reason="phone_missing_or_invalid",
+            )
+            await self._log_outbound_result(
+                normalized_phone="",
+                business_name=opportunity.business_name,
+                template_name=template_name,
+                status=result.status,
+                reason=result.reason,
+                place_id=str(metadata.get("place_id") or ""),
+                payload={},
+                response={},
+                sent=False,
+            )
+            return result
+
+        existing = await self._sent_record_for_phone(normalized_phone)
+        if existing:
+            result = OutboundSendResult(
+                business_name=opportunity.business_name,
+                phone_number=normalized_phone,
+                status="skipped_duplicate",
+                template_name=template_name,
+                reason="number_already_contacted",
+            )
+            await self._log_outbound_result(
+                normalized_phone=normalized_phone,
+                business_name=opportunity.business_name,
+                template_name=template_name,
+                status=result.status,
+                reason=result.reason,
+                place_id=str(metadata.get("place_id") or ""),
+                payload={},
+                response=existing,
+                sent=False,
+            )
+            return result
+
+        queued = await self._queued_record_for_phone(normalized_phone)
+        if queued:
+            return OutboundSendResult(
+                business_name=opportunity.business_name,
+                phone_number=normalized_phone,
+                status="queued",
+                template_name=template_name,
+                reason="already_queued",
+            )
+
+        sent_today = await self._sent_today_count()
+        if sent_today >= int(daily_limit):
+            result = OutboundSendResult(
+                business_name=opportunity.business_name,
+                phone_number=normalized_phone,
+                status="skipped_rate_limit",
+                template_name=template_name,
+                reason=f"daily_limit_reached:{daily_limit}",
+            )
+            await self._log_outbound_result(
+                normalized_phone=normalized_phone,
+                business_name=opportunity.business_name,
+                template_name=template_name,
+                status=result.status,
+                reason=result.reason,
+                place_id=str(metadata.get("place_id") or ""),
+                payload={},
+                response={"sent_today": sent_today},
+                sent=False,
+            )
+            return result
+
+        payload = {
+            "phone_number": normalized_phone,
+            "business_name": opportunity.business_name,
+            "template_name": template_name,
+            "language": "es",
+            "variables": [opportunity.business_name, offer_name, pain_line],
+        }
+        if not self.is_business_hours():
+            await self._log_outbound_result(
+                normalized_phone=normalized_phone,
+                business_name=opportunity.business_name,
+                template_name=template_name,
+                status="queued",
+                reason="outside_business_hours",
+                place_id=str(metadata.get("place_id") or ""),
+                payload=payload,
+                response={},
+                sent=False,
+            )
+            return OutboundSendResult(
+                business_name=opportunity.business_name,
+                phone_number=normalized_phone,
+                status="queued",
+                template_name=template_name,
+                reason="outside_business_hours",
+                response={},
+            )
+
+        response = await send_ycloud_whatsapp_template_message(
+            from_number="",
+            to=normalized_phone,
+            template_name=template_name,
+            body_variables=[opportunity.business_name, offer_name, pain_line],
+            language="es",
+        )
+        status = "sent" if response else "failed"
+        reason = None if response else "ycloud_send_failed"
+        await self._log_outbound_result(
+            normalized_phone=normalized_phone,
+            business_name=opportunity.business_name,
+            template_name=template_name,
+            status=status,
+            reason=reason,
+            place_id=str(metadata.get("place_id") or ""),
+            payload=payload,
+            response=response or {},
+            sent=bool(response),
+        )
+        return OutboundSendResult(
+            business_name=opportunity.business_name,
+            phone_number=normalized_phone,
+            status=status,
+            template_name=template_name,
+            reason=reason,
+            response=response or {},
+        )
+
+    async def flush_queued_clinic_outbound_messages(
+        self,
+        *,
+        daily_limit: int = 10,
+    ) -> list[OutboundSendResult]:
+        if not self.is_business_hours():
+            return []
+
+        sent_today = await self._sent_today_count()
+        remaining = max(0, int(daily_limit) - sent_today)
+        if remaining <= 0:
+            return []
+
+        results: list[OutboundSendResult] = []
+        for row in await self._queued_rows():
+            if remaining <= 0:
+                break
+            normalized_phone = str(row["normalized_phone"] or "").strip()
+            existing = await self._sent_record_for_phone(normalized_phone)
+            if existing:
+                await self._mark_queue_entry_failed(
+                    int(row["id"]),
+                    reason="number_already_contacted",
+                    response=existing,
+                )
+                results.append(
+                    OutboundSendResult(
+                        business_name=str(row["business_name"] or ""),
+                        phone_number=normalized_phone,
+                        status="skipped_duplicate",
+                        template_name=str(row["template_name"] or _DEFAULT_CLINIC_TEMPLATE),
+                        reason="number_already_contacted",
+                        response=existing,
+                    )
+                )
+                continue
+
+            payload = json.loads(str(row["payload_json"] or "{}") or "{}")
+            template_name = str(payload.get("template_name") or row["template_name"] or _DEFAULT_CLINIC_TEMPLATE)
+            variables = list(payload.get("variables") or [])
+            response = await send_ycloud_whatsapp_template_message(
+                from_number="",
+                to=normalized_phone,
+                template_name=template_name,
+                body_variables=[str(item) for item in variables],
+                language=str(payload.get("language") or "es"),
+            )
+            if response:
+                await self._mark_queue_entry_sent(int(row["id"]), response=response)
+                results.append(
+                    OutboundSendResult(
+                        business_name=str(row["business_name"] or ""),
+                        phone_number=normalized_phone,
+                        status="sent",
+                        template_name=template_name,
+                        response=response,
+                    )
+                )
+                remaining -= 1
+            else:
+                await self._mark_queue_entry_failed(
+                    int(row["id"]),
+                    reason="ycloud_send_failed",
+                    response={},
+                )
+                results.append(
+                    OutboundSendResult(
+                        business_name=str(row["business_name"] or ""),
+                        phone_number=normalized_phone,
+                        status="failed",
+                        template_name=template_name,
+                        reason="ycloud_send_failed",
+                        response={},
+                    )
+                )
+        return results
+
+    async def send_clinic_outbound_campaign(
+        self,
+        opportunities: Iterable[OpportunityScore],
+        *,
+        template_name: str = _DEFAULT_CLINIC_TEMPLATE,
+        offer_name: str = _DEFAULT_CLINIC_OFFER_NAME,
+        pain_line: str = _DEFAULT_CLINIC_PAIN_LINE,
+        daily_limit: int = 10,
+        score_threshold: float = 75.0,
+    ) -> list[OutboundSendResult]:
+        results: list[OutboundSendResult] = []
+        for opportunity in opportunities:
+            results.append(
+                await self.send_clinic_outbound_message(
+                    opportunity,
+                    template_name=template_name,
+                    offer_name=offer_name,
+                    pain_line=pain_line,
+                    daily_limit=daily_limit,
+                    score_threshold=score_threshold,
+                )
+            )
+        return results
+
     async def detect_product_gaps(
         self,
         conversations: Iterable[dict[str, Any]],
@@ -593,3 +1148,12 @@ class HunterOperator:
             outreach_messages=outreach,
             product_gaps=product_gaps,
         )
+
+
+def json_dumps(payload: dict[str, Any]) -> str:
+    try:
+        import json
+
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        return "{}"

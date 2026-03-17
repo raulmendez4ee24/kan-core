@@ -7,28 +7,35 @@ import os
 import re
 from pathlib import Path
 from tempfile import gettempdir
-from textwrap import fill
 from time import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import httpx
 import numpy as np
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 if TYPE_CHECKING:
     from brain.brand_director import ContentPost
 
 logger = logging.getLogger("kan_core.asset_manager")
 
-_BACKGROUND = "#1a1a2e"
+_BACKGROUND = "#0a0a14"
 _ACCENT = "#e94560"
-_TEXT = "#f5f7ff"
+_TEXT = "#f0f0f5"
 _MUTED = "#b8bfd6"
 _DEFAULT_GEMINI_IMAGE_MODEL = "models/gemini-3-pro-image-preview"
-_SORA_BOLD_URL = "https://github.com/google/fonts/raw/main/ofl/sora/Sora%5Bwght%5D.ttf"
-_JETBRAINS_MONO_URL = "https://github.com/JetBrains/JetBrainsMono/raw/master/fonts/ttf/JetBrainsMono-Regular.ttf"
+_DEFAULT_FAL_MODEL = "fal-ai/flux-pro/v1.1"
+_SORA_BOLD_URLS = (
+    "https://github.com/google/fonts/raw/main/ofl/sora/static/Sora-Bold.ttf",
+    "https://github.com/google/fonts/raw/main/ofl/sora/Sora%5Bwght%5D.ttf",
+)
+_JETBRAINS_MONO_URLS = (
+    "https://github.com/JetBrains/JetBrainsMono/raw/master/fonts/ttf/JetBrainsMono-Medium.ttf",
+    "https://github.com/JetBrains/JetBrainsMono/raw/master/fonts/ttf/JetBrainsMono-Regular.ttf",
+)
 _SORA_FONT_NAME = "Sora-Bold.ttf"
-_JETBRAINS_MONO_NAME = "JetBrains-Mono-Regular.ttf"
+_JETBRAINS_MONO_NAME = "JetBrains-Mono-Medium.ttf"
+_FONT_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 _FONT_DOWNLOAD_ATTEMPTED: set[str] = set()
 _EMOJI_RE = re.compile(
     "["
@@ -51,7 +58,7 @@ BRAND: dict[str, Any] = {
     "name": "KAN Logic",
     "positioning": "automation and growth systems for Mexican businesses",
     "palette": {
-        "background": "#1a1a2e",
+        "background": "#0a0a14",
         "accent": "#e94560",
         "text": "#f5f7ff",
         "muted": "#b8bfd6",
@@ -131,6 +138,93 @@ STYLE_PRESETS: dict[str, dict[str, Any]] = {
         "palette_hint": "navy, sand, and gold with restrained coral accent",
         "objects": ["modern home", "tablet presentation", "city view"],
     },
+    "editorial": {
+        "mood": "editorial, premium, strategic authority",
+        "scene": "luxury business editorial setting with strong shadows",
+        "composition": "magazine-grade asymmetry with controlled negative space",
+        "palette_hint": "dark editorial neutrals with restrained coral accent",
+        "objects": ["desk details", "printed materials", "architectural textures"],
+    },
+    "human": {
+        "mood": "credible, candid, human-centered trust",
+        "scene": "real operator moment inside a business workflow",
+        "composition": "documentary framing with authentic negative space",
+        "palette_hint": "organic dark neutrals with subtle warm highlights and coral accent",
+        "objects": ["phone", "notebook", "real workspace details"],
+    },
+    "documentary": {
+        "mood": "raw, credible, observational",
+        "scene": "candid business moment with grounded realism",
+        "composition": "reportage framing, natural imperfection, disciplined reading lane",
+        "palette_hint": "film-like dark neutrals with restrained coral accent",
+        "objects": ["workspace", "device glow", "authentic business textures"],
+    },
+    "glassmorphism_dark": {
+        "mood": "tech-noir infrastructure, premium, architectural realism",
+        "scene": (
+            "Modern server room behind glass partition at night. "
+            "Racks of servers with subtle blue and orange LED indicators visible through smoked glass. "
+            "Real datacenter photography."
+        ),
+        "composition": "architectural perspective with layered glass reflections and a clean dark reading lane on the left",
+        "palette_hint": "deep black, smoked glass, restrained cyan and amber practical light, no monochrome teal wash",
+        "objects": ["server racks", "smoked glass partition", "subtle LED indicators"],
+    },
+    "terminal_luxury": {
+        "mood": "command-line power, premium industrial design, real product photography",
+        "scene": (
+            "Close-up of a premium dark desk surface with a single high-end monitor showing terminal "
+            "with green text on black. The monitor glow illuminates the brushed aluminum desk surface. "
+            "One amber desk lamp. Real product photography, not render."
+        ),
+        "composition": "tight product-led crop with negative space on the left and one dominant light source",
+        "palette_hint": "brushed aluminum, charcoal, black glass, terminal green glow, one amber practical accent",
+        "objects": ["high-end monitor", "brushed aluminum desk", "amber desk lamp"],
+    },
+    "hardware_precision": {
+        "mood": "precision engineering fetish, macro realism, luxury product campaign",
+        "scene": (
+            "Macro photograph of the inside of a premium laptop, motherboard visible. "
+            "Copper traces, black capacitors, precision soldering. Shot like a Rolex ad — every component is beautiful. "
+            "Real macro photography, ring light, shallow depth of field."
+        ),
+        "composition": "macro hero crop with disciplined focus plane and dark negative space where possible",
+        "palette_hint": "copper, graphite, matte black, subtle highlight rolloff, zero fake neon",
+        "objects": ["motherboard", "copper traces", "precision soldering", "black capacitors"],
+    },
+    "swiss_futurism": {
+        "mood": "architectural rigor, mathematical calm, Japanese-Swiss precision",
+        "scene": (
+            "Architectural photograph of a Tadao Ando concrete building interior. "
+            "Pure geometric lines, raw concrete, indirect natural light creating precise shadows. "
+            "Minimal, mathematical, Japanese-Swiss precision. Real architecture, not render."
+        ),
+        "composition": "strict geometric framing with clean left-side negative space and shadow-led rhythm",
+        "palette_hint": "raw concrete, deep shadow, cool daylight, restrained coral only as tiny accent if needed",
+        "objects": ["concrete walls", "architectural voids", "precise shadow lines"],
+    },
+    "neural_dark": {
+        "mood": "urban systems intelligence, dark cinematic realism, long-exposure energy",
+        "scene": (
+            "Long exposure photograph of a city at night from above. "
+            "Light trails from cars create neural-network-like patterns. "
+            "Deep black sky, orange and cyan light trails. Real photography, long exposure, tripod shot."
+        ),
+        "composition": "elevated urban viewpoint with layered light trails and a dark clean lane for text on the left",
+        "palette_hint": "deep black sky, restrained cyan and orange light trails, no synthetic holograms",
+        "objects": ["city grid", "light trails", "night skyline"],
+    },
+    "tactile_interface": {
+        "mood": "premium hardware fetish, tactile detail, macro product realism",
+        "scene": (
+            "Close-up product photograph of a Teenage Engineering OP-1 synthesizer or similar premium hardware device. "
+            "Matte black surface, orange knobs, precise typography on buttons. "
+            "Shot on macro lens with shallow depth of field. Real product, real photo."
+        ),
+        "composition": "macro tactile crop with one hero control area and negative space preserved on the left",
+        "palette_hint": "matte black, warm orange controls, subtle off-white legends, no CGI sheen",
+        "objects": ["premium hardware device", "orange knobs", "tactile buttons"],
+    },
 }
 
 READY_PROMPTS: dict[str, str] = {
@@ -146,6 +240,19 @@ READY_PROMPTS: dict[str, str] = {
     "brand_authority": "Create a founder-brand visual that feels experienced, strategic, and commercially sharp.",
     "workflow_upgrade": "Show operational chaos transformed into a clean automated workflow.",
     "whatsapp_conversion": "Depict WhatsApp as a serious sales channel with immediate response and booked meetings.",
+}
+
+VERTICAL_ACCENT_MAP: dict[str, tuple[str, str]] = {
+    "default": ("orange accent", "#f97316"),
+    "dental": ("blue accent", "#3b82f6"),
+    "restaurant": ("warm amber accent", "#eab308"),
+    "restaurants": ("warm amber accent", "#eab308"),
+    "realestate": ("gold accent", "#d4af37"),
+    "real_estate": ("gold accent", "#d4af37"),
+    "gym": ("red-orange accent", "#ef4444"),
+    "beauty": ("rose accent", "#f472b6"),
+    "spa": ("rose accent", "#f472b6"),
+    "spas": ("rose accent", "#f472b6"),
 }
 
 CREATIVE_DIRECTOR: list[dict[str, Any]] = [
@@ -307,6 +414,12 @@ _STYLE_ANTI_AI_MAP: dict[str, list[str]] = {
                    "composition_editorial"],
     "real_estate":["photography_real", "lighting_natural", "color_grading", "texture_real",
                    "composition_editorial"],
+    "glassmorphism_dark": ["photography_real", "lighting_natural", "color_grading", "texture_real", "dark_mode_tech", "composition_editorial"],
+    "terminal_luxury": ["photography_real", "lighting_natural", "color_grading", "texture_real", "dark_mode_tech", "screen_realistic"],
+    "hardware_precision": ["photography_real", "lighting_natural", "color_grading", "texture_real"],
+    "swiss_futurism": ["photography_real", "lighting_natural", "color_grading", "composition_editorial"],
+    "neural_dark": ["photography_real", "lighting_natural", "color_grading", "composition_editorial", "dark_mode_tech"],
+    "tactile_interface": ["photography_real", "lighting_natural", "color_grading", "texture_real"],
 }
 
 
@@ -323,7 +436,132 @@ def _select_creative_direction(topic: str, vertical: str | None) -> dict[str, An
     return CREATIVE_DIRECTOR[index]
 
 
+def _resolve_vertical_accent(vertical: str | None) -> tuple[str, str]:
+    key = str(vertical or "").strip().lower().replace(" ", "_")
+    return VERTICAL_ACCENT_MAP.get(key, VERTICAL_ACCENT_MAP["default"])
+
+
 RequestFn = Callable[[str, str, dict[str, Any], dict[str, Any]], Awaitable[dict[str, Any] | None]]
+
+
+class GeminiProvider:
+    async def generate(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        prompt: str,
+    ) -> bytes:
+        if not api_key:
+            raise RuntimeError("GOOGLE_API_KEY is required for Gemini image generation")
+        return await asyncio.to_thread(self._generate_sync, api_key=api_key, model=model, prompt=prompt)
+
+    def _generate_sync(self, *, api_key: str, model: str, prompt: str) -> bytes:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=api_key)
+        image_bytes: bytes | None = None
+        if "imagen" in model.lower():
+            response = client.models.generate_images(
+                model=model,
+                prompt=prompt,
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    aspect_ratio="1:1",
+                    output_mime_type="image/jpeg",
+                    image_size="1K",
+                ),
+            )
+            generated_images = list(getattr(response, "generated_images", None) or [])
+            if generated_images:
+                image = generated_images[0].image
+                image_bytes = getattr(image, "image_bytes", None) if image is not None else None
+        else:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+            )
+            candidates = list(getattr(response, "candidates", None) or [])
+            for candidate in candidates:
+                content = getattr(candidate, "content", None)
+                for part in list(getattr(content, "parts", None) or []):
+                    inline_data = getattr(part, "inline_data", None)
+                    if inline_data is not None and getattr(inline_data, "data", None):
+                        image_bytes = inline_data.data
+                        break
+                if image_bytes:
+                    break
+        if not image_bytes:
+            raise RuntimeError("Gemini image generation returned no image bytes")
+        return image_bytes
+
+
+class FluxProvider:
+    async def generate(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        prompt: str,
+    ) -> bytes:
+        if not api_key:
+            raise RuntimeError("FAL_API_KEY is required for Flux image generation")
+
+        headers = {
+            "Authorization": f"Key {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        payload = {
+            "prompt": prompt,
+            "image_size": "square_hd",
+            "output_format": "jpeg",
+        }
+        run_url = f"https://fal.run/{model}"
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            result_resp = await client.post(run_url, headers=headers, json=payload)
+            result_resp.raise_for_status()
+            result_data = result_resp.json()
+
+            image_url = ""
+            images = result_data.get("images") or []
+            if images and isinstance(images[0], dict):
+                image_url = str(images[0].get("url") or "").strip()
+            if not image_url:
+                image_url = str(result_data.get("image", {}).get("url") or "").strip() if isinstance(result_data.get("image"), dict) else ""
+            if not image_url:
+                raise RuntimeError("Flux result did not contain an image URL")
+
+            image_resp = await client.get(image_url)
+            image_resp.raise_for_status()
+            return image_resp.content
+
+
+class ProviderRouter:
+    FLUX_STYLES = {
+        "glassmorphism_dark",
+        "terminal_luxury",
+        "hardware_precision",
+        "swiss_futurism",
+        "neural_dark",
+        "tactile_interface",
+    }
+    GEMINI_STYLES = {
+        "premium",
+        "editorial",
+        "human",
+        "documentary",
+    }
+
+    def select_provider_name(self, style_preset: str) -> str:
+        style_key = str(style_preset or "").strip().lower().replace(" ", "_")
+        if style_key in self.FLUX_STYLES:
+            return "flux"
+        if style_key in self.GEMINI_STYLES:
+            return "gemini"
+        return "gemini"
 
 
 def build_image_prompt(
@@ -340,7 +578,19 @@ def build_image_prompt(
     preset = STYLE_PRESETS.get(preset_key) or STYLE_PRESETS["premium"]
     vertical_key = str(vertical or "").strip().lower().replace(" ", "_")
     vertical_preset = STYLE_PRESETS.get(vertical_key) or {}
-    creative_direction = _select_creative_direction(topic, vertical_key or vertical)
+    tech_noir_styles = {
+        "glassmorphism_dark",
+        "terminal_luxury",
+        "hardware_precision",
+        "swiss_futurism",
+        "neural_dark",
+        "tactile_interface",
+    }
+    creative_direction = None if preset_key in tech_noir_styles else _select_creative_direction(topic, vertical_key or vertical)
+    scene = preset["scene"] if preset_key in tech_noir_styles else vertical_preset.get("scene", preset["scene"])
+    composition = preset["composition"] if preset_key in tech_noir_styles else vertical_preset.get("composition", preset["composition"])
+    palette_hint = preset["palette_hint"] if preset_key in tech_noir_styles else vertical_preset.get("palette_hint", preset["palette_hint"])
+    accent_name, accent_hex = _resolve_vertical_accent(vertical_key or vertical)
     content_hint = READY_PROMPTS.get(str(content_type or "general").strip(), "")
     objects = ", ".join(preset.get("objects", []))
     visual_rules = ", ".join(BRAND["visual_rules"])
@@ -350,7 +600,7 @@ def build_image_prompt(
         if include_logo
         else "Do not reserve space for any logo."
     )
-    return (
+    prompt = (
         f"Create a professional 1080x1080 social media image for {BRAND['name']}. "
         f"Brand positioning: {BRAND['positioning']}. "
         f"Topic: {topic}. "
@@ -360,28 +610,47 @@ def build_image_prompt(
         f"Vertical: {vertical_key or 'general business'}. "
         f"Content type: {content_type}. "
         f"Mood: {preset['mood']}. "
-        f"Scene: {vertical_preset.get('scene', preset['scene'])}. "
-        f"Composition: {vertical_preset.get('composition', preset['composition'])}. "
-        f"Palette direction: {vertical_preset.get('palette_hint', preset['palette_hint'])}. "
-        f"Creative director style: {creative_direction['key']}. "
-        f"Creative brief: {creative_direction['description']}. "
-        f"Reference system: {creative_direction['references']}. "
-        f"Composition language: {creative_direction['composition']}. "
+        f"Scene: {scene}. "
+        f"Composition: {composition}. "
+        f"Palette direction: {palette_hint}. "
+        f"Accent color rule for this vertical: {accent_name} {accent_hex}. "
         f"Suggested objects or context: {objects}. "
         f"Content objective: {content_hint or 'Create a compelling general business content visual.'} "
         f"Logo handling: {logo_instruction} "
-        f"Brand colors must influence the image, especially {BRAND['palette']['background']} and {BRAND['palette']['accent']}. "
+        f"Brand colors must influence the image, especially dark base tones around {BRAND['palette']['background']} and the accent color {accent_hex}. "
         f"Tone: {voice}. "
         "Make it polished, commercial, premium, and relevant for a modern Mexican business audience. "
         "Use real photography language or premium design direction so the model thinks like a photographer or art director, not a generic image generator. "
+        f"Follow these visual rules: {visual_rules}. "
+        f"ANTI-AI PHOTOGRAPHY DIRECTIVES: {_build_anti_ai_section(preset_key)} "
+    )
+    if creative_direction is not None:
+        prompt += (
+            f"Creative director style: {creative_direction['key']}. "
+            f"Creative brief: {creative_direction['description']}. "
+            f"Reference system: {creative_direction['references']}. "
+            f"Composition language: {creative_direction['composition']}. "
+            f"Anti-AI-slop directives: {creative_direction['anti_slop']} "
+        )
+    prompt += (
         "ABSOLUTELY NO TEXT, WORDS, LETTERS, OR TYPOGRAPHY IN THE IMAGE. "
         "Pure background composition only. Any text in the image will ruin the design. "
         "No emojis, no icons, no symbols, no UI elements, no text overlays, no watermarks. "
-        "Leave clean space for text overlay, no text in the image. "
-        f"Anti-AI-slop directives: {creative_direction['anti_slop']} "
-        f"Follow these visual rules: {visual_rules}. "
-        f"ANTI-AI PHOTOGRAPHY DIRECTIVES: {_build_anti_ai_section(preset_key)}"
+        "leave clean space for text overlay, no text in the image. "
+        "CRITICAL COLOR RULES: "
+        "- The image must be 70%+ very dark (near black, #0a0a14). "
+        "- Color accents appear on SMALL elements only: a LED light, a screen glow, a reflection, a small object. "
+        "- The accent color occupies maximum 10-15% of the image area. "
+        "- NEVER a monochromatic teal/cyan/blue wash over everything. "
+        "- Think: dark room with one small source of colored light. "
+        "- The darkness is the design. The accent is the punctuation. "
+        "DO NOT generate any text, words, letters, or numbers in the image. "
+        "Leave clean dark area in left side for text overlay. "
+        "NOT a 3D render. NOT CGI. A REAL photograph. "
+        "Subtle film grain. Natural lens imperfections. "
+        "Single light source with consistent shadows."
     )
+    return prompt
 
 
 class AssetManager:
@@ -389,8 +658,14 @@ class AssetManager:
         self,
         *,
         requester: RequestFn | None = None,
+        gemini_provider: "GeminiProvider | None" = None,
+        flux_provider: "FluxProvider | None" = None,
+        provider_router: "ProviderRouter | None" = None,
     ) -> None:
         self.requester = requester
+        self.gemini_provider = gemini_provider or GeminiProvider()
+        self.flux_provider = flux_provider or FluxProvider()
+        self.provider_router = provider_router or ProviderRouter()
 
     def _cloud_name(self) -> str:
         return str(os.getenv("CLOUDINARY_CLOUD_NAME") or "").strip()
@@ -404,8 +679,14 @@ class AssetManager:
     def _google_api_key(self) -> str:
         return str(os.getenv("GOOGLE_API_KEY") or "").strip()
 
+    def _fal_api_key(self) -> str:
+        return str(os.getenv("FAL_API_KEY") or "").strip()
+
     def _gemini_image_model(self) -> str:
         return str(os.getenv("GEMINI_MODEL") or _DEFAULT_GEMINI_IMAGE_MODEL).strip()
+
+    def _fal_model(self) -> str:
+        return str(os.getenv("FAL_MODEL") or _DEFAULT_FAL_MODEL).strip()
 
     def get_ready_prompt(self, key: str) -> str:
         ready = READY_PROMPTS.get(str(key).strip())
@@ -514,29 +795,38 @@ class AssetManager:
         )
 
     def _font_cache_path(self, filename: str) -> Path:
+        return _FONT_ASSETS_DIR / filename
+
+    def _font_tmp_fallback_path(self, filename: str) -> Path:
         return Path(gettempdir()) / filename
 
-    def _ensure_downloaded_font(self, *, url: str, filename: str) -> Path | None:
-        font_path = self._font_cache_path(filename)
-        if font_path.exists():
-            return font_path
+    def _ensure_downloaded_font(self, *, urls: tuple[str, ...], filename: str) -> Path | None:
+        primary_path = self._font_cache_path(filename)
+        fallback_path = self._font_tmp_fallback_path(filename)
+        for existing in (primary_path, fallback_path):
+            if existing.exists():
+                return existing
         if filename in _FONT_DOWNLOAD_ATTEMPTED:
             return None
         _FONT_DOWNLOAD_ATTEMPTED.add(filename)
-        try:
-            response = httpx.get(url, timeout=10.0, follow_redirects=True)
-            response.raise_for_status()
-            font_path.write_bytes(response.content)
-            return font_path
-        except Exception:
-            logger.exception("Could not download font %s; using fallback font", filename)
-            return None
+        _FONT_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+        for url in urls:
+            for target in (primary_path, fallback_path):
+                try:
+                    response = httpx.get(url, timeout=10.0, follow_redirects=True)
+                    response.raise_for_status()
+                    target.write_bytes(response.content)
+                    return target
+                except Exception:
+                    continue
+        logger.warning("Could not download font %s; using fallback font", filename)
+        return None
 
     def _ensure_sora_bold_font(self) -> Path | None:
-        return self._ensure_downloaded_font(url=_SORA_BOLD_URL, filename=_SORA_FONT_NAME)
+        return self._ensure_downloaded_font(urls=_SORA_BOLD_URLS, filename=_SORA_FONT_NAME)
 
     def _ensure_jetbrains_mono_font(self) -> Path | None:
-        return self._ensure_downloaded_font(url=_JETBRAINS_MONO_URL, filename=_JETBRAINS_MONO_NAME)
+        return self._ensure_downloaded_font(urls=_JETBRAINS_MONO_URLS, filename=_JETBRAINS_MONO_NAME)
 
     def _load_font(self, size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         font_path = self._ensure_sora_bold_font() if bold else None
@@ -586,29 +876,90 @@ class AssetManager:
         output.parent.mkdir(parents=True, exist_ok=True)
         image.save(output, format="JPEG", quality=92, optimize=True)
 
-    def _apply_text_gradient(self, image: Image.Image, *, top: int, bottom: int) -> Image.Image:
+    def _apply_text_background_pill(
+        self,
+        image: Image.Image,
+        *,
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+    ) -> Image.Image:
         base = image.convert("RGBA")
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        width = base.size[0]
-        height = max(1, bottom - top)
-        gradient = Image.new("L", (1, height))
-        for y in range(height):
-            midpoint = height * 0.45
-            if y <= midpoint:
-                alpha = int(128 * (y / max(1, midpoint)))
-            else:
-                alpha = int(128 * ((height - y) / max(1, height - midpoint)))
-            gradient.putpixel((0, y), max(0, min(128, alpha)))
-        alpha_mask = gradient.resize((width, height))
-        overlay.paste((0, 0, 0, 0), (0, 0, width, base.size[1]))
-        overlay.paste((0, 0, 0, 0), (0, 0, width, top))
-        overlay.paste((0, 0, 0, 0), (0, bottom, width, base.size[1]))
-        band = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        band.putalpha(alpha_mask)
-        overlay.alpha_composite(band, (0, top))
-        left_cover = Image.new("RGBA", (int(width * 0.60), int(base.size[1] * 0.50)), (0, 0, 0, 191))
-        overlay.alpha_composite(left_cover, (0, 0))
+        mask = Image.new("L", base.size, 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.rectangle((left, top, right, bottom), fill=int(255 * 0.35))
+        blurred_mask = mask.filter(ImageFilter.GaussianBlur(radius=20))
+        overlay.paste((0, 0, 0, 255), (0, 0), blurred_mask)
         return Image.alpha_composite(base, overlay)
+
+    def _measure_line_width(
+        self,
+        *,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+        letter_spacing: float,
+    ) -> float:
+        if not text:
+            return 0.0
+        width = 0.0
+        for index, char in enumerate(text):
+            width += float(draw.textlength(char, font=font))
+            if index < len(text) - 1:
+                width += letter_spacing
+        return width
+
+    def _measure_multiline_text(
+        self,
+        *,
+        draw: ImageDraw.ImageDraw,
+        lines: list[str],
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+        line_spacing: int,
+        letter_spacing: float,
+    ) -> tuple[int, int]:
+        widths = [
+            self._measure_line_width(draw=draw, text=line, font=font, letter_spacing=letter_spacing)
+            for line in lines
+        ] or [0.0]
+        bbox = draw.textbbox((0, 0), "Ag", font=font)
+        line_height = max(1, bbox[3] - bbox[1])
+        total_height = line_height * len(lines)
+        if len(lines) > 1:
+            total_height += line_spacing * (len(lines) - 1)
+        return int(max(widths)), int(total_height)
+
+    def _wrap_hook_text(
+        self,
+        *,
+        draw: ImageDraw.ImageDraw,
+        hook_text: str,
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+        max_width: int,
+        letter_spacing: float,
+    ) -> list[str]:
+        words = hook_text.split()
+        if not words:
+            return [""]
+        lines: list[str] = []
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            candidate_width = self._measure_line_width(
+                draw=draw,
+                text=candidate,
+                font=font,
+                letter_spacing=letter_spacing,
+            )
+            if candidate_width <= max_width:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+        return lines
 
     def _fit_hook_text(
         self,
@@ -617,90 +968,184 @@ class AssetManager:
         hook_text: str,
         max_width: int,
         max_height: int,
-    ) -> tuple[str, ImageFont.FreeTypeFont | ImageFont.ImageFont, int, tuple[int, int, int, int]]:
-        for font_size in range(80, 35, -2):
+        letter_spacing: float,
+    ) -> tuple[list[str], ImageFont.FreeTypeFont | ImageFont.ImageFont, int, tuple[int, int, int, int]]:
+        for font_size in range(80, 31, -2):
             font = self._load_font(font_size, bold=True)
-            avg_char_width = max(1, int(font_size * 0.52))
-            wrap_width = max(10, max_width // avg_char_width)
-            wrapped = fill(hook_text, width=wrap_width)
-            spacing = max(8, int(font_size * 0.16))
-            bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=spacing)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
+            line_spacing = max(8, int(font_size * 0.15))
+            lines = self._wrap_hook_text(
+                draw=draw,
+                hook_text=hook_text,
+                font=font,
+                max_width=max_width,
+                letter_spacing=letter_spacing,
+            )
+            text_width, text_height = self._measure_multiline_text(
+                draw=draw,
+                lines=lines,
+                font=font,
+                line_spacing=line_spacing,
+                letter_spacing=letter_spacing,
+            )
             if text_width <= max_width and text_height <= max_height:
-                return wrapped, font, spacing, bbox
+                return lines, font, line_spacing, (0, 0, text_width, text_height)
 
-        font = self._load_font(36, bold=True)
-        wrapped = fill(hook_text, width=max(10, max_width // max(1, int(36 * 0.52))))
-        spacing = 8
-        bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=spacing)
-        return wrapped, font, spacing, bbox
+        font = self._load_font(32, bold=True)
+        line_spacing = max(8, int(32 * 0.15))
+        lines = self._wrap_hook_text(
+            draw=draw,
+            hook_text=hook_text,
+            font=font,
+            max_width=max_width,
+            letter_spacing=letter_spacing,
+        )
+        text_width, text_height = self._measure_multiline_text(
+            draw=draw,
+            lines=lines,
+            font=font,
+            line_spacing=line_spacing,
+            letter_spacing=letter_spacing,
+        )
+        return lines, font, line_spacing, (0, 0, text_width, text_height)
+
+    def _draw_spaced_multiline_text(
+        self,
+        *,
+        draw: ImageDraw.ImageDraw,
+        x: float,
+        y: float,
+        lines: list[str],
+        font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+        fill: str,
+        line_spacing: int,
+        letter_spacing: float,
+    ) -> None:
+        bbox = draw.textbbox((0, 0), "Ag", font=font)
+        line_height = max(1, bbox[3] - bbox[1])
+        cursor_y = y
+        for line in lines:
+            cursor_x = x
+            for index, char in enumerate(line):
+                draw.text((cursor_x, cursor_y), char, fill=fill, font=font)
+                cursor_x += float(draw.textlength(char, font=font))
+                if index < len(line) - 1:
+                    cursor_x += letter_spacing
+            cursor_y += line_height + line_spacing
 
     def _overlay_text_and_wordmark(
         self,
         *,
         hook_text: str,
-        topic: str,
+        vertical: str | None,
         include_logo: bool,
         image_path: Path,
     ) -> None:
         cleaned_hook = self._strip_emojis(hook_text)
         image = Image.open(image_path).convert("RGB")
-        image = self._apply_text_gradient(image, top=84, bottom=520).convert("RGB")
         draw = ImageDraw.Draw(image)
         width, height = image.size
-        brand_font = self._load_font(28, bold=True)
         padding = 60
-        text_area_width = int(width * 0.60) - (padding * 2)
-        text_area_height = int(height * 0.50) - (padding * 2)
-        wrapped_hook, title_font, spacing, hook_bbox = self._fit_hook_text(
+        letter_spacing = 0.5
+        accent_color = _resolve_vertical_accent(vertical)[1]
+        text_area_width = int(width * 0.65)
+        text_area_height = int(height * 0.42)
+        hook_lines, title_font, line_spacing, hook_bbox = self._fit_hook_text(
             draw=draw,
             hook_text=cleaned_hook,
             max_width=text_area_width,
             max_height=text_area_height,
+            letter_spacing=letter_spacing,
         )
         hook_x = padding
-        accent_y = padding
-        accent_width = min(180, max(120, text_area_width // 3))
-        draw.rectangle(
-            (hook_x, accent_y, hook_x + accent_width, accent_y + 4),
-            fill=_ACCENT,
+        accent_y = padding + 10
+        accent_width = 60
+        accent_height = 3
+        hook_y = accent_y + accent_height + 16
+        pill_left = hook_x - 40
+        pill_top = max(0, accent_y - 30)
+        pill_right = min(width, hook_x + hook_bbox[2] + 40)
+        pill_bottom = min(height, hook_y + hook_bbox[3] + 30)
+        image = self._apply_text_background_pill(
+            image,
+            left=pill_left,
+            top=pill_top,
+            right=pill_right,
+            bottom=pill_bottom,
         )
-        hook_y = accent_y + 28
-        draw.multiline_text(
-            (hook_x, hook_y),
-            wrapped_hook,
-            fill=_TEXT,
+        draw = ImageDraw.Draw(image)
+        draw.rectangle(
+            (hook_x, accent_y, hook_x + accent_width, accent_y + accent_height),
+            fill=accent_color,
+        )
+        self._draw_spaced_multiline_text(
+            draw=draw,
+            x=hook_x,
+            y=hook_y,
+            lines=hook_lines,
             font=title_font,
-            spacing=spacing,
+            fill=_TEXT,
+            line_spacing=line_spacing,
+            letter_spacing=letter_spacing,
         )
 
         if include_logo:
             wordmark = "KAN Logic"
+            brand_font = self._load_mono_font(13)
             bbox = draw.textbbox((0, 0), wordmark, font=brand_font)
             wordmark_width = bbox[2] - bbox[0]
             wordmark_height = bbox[3] - bbox[1]
-            mark_x = width - wordmark_width - 72
-            mark_y = height - wordmark_height - 54
-            draw.rounded_rectangle(
-                (mark_x - 24, mark_y - 18, mark_x + wordmark_width + 24, mark_y + wordmark_height + 18),
-                radius=18,
-                fill=(15, 18, 34),
+            pad_x = 14
+            pad_y = 8
+            accent_bar_width = 2
+            accent_gap = 10
+            badge_width = wordmark_width + (pad_x * 2) + accent_bar_width + accent_gap
+            badge_height = wordmark_height + (pad_y * 2)
+            mark_x = width - badge_width - 54
+            mark_y = height - badge_height - 44
+            badge = Image.new("RGBA", image.size, (0, 0, 0, 0))
+            badge_draw = ImageDraw.Draw(badge)
+            badge_draw.rounded_rectangle(
+                (mark_x, mark_y, mark_x + badge_width, mark_y + badge_height),
+                radius=6,
+                fill=(10, 10, 20, int(255 * 0.8)),
+                outline=(26, 26, 46, 255),
+                width=1,
             )
-            draw.text((mark_x, mark_y), wordmark, fill=_ACCENT, font=brand_font)
+            line_left = mark_x + pad_x
+            line_top = mark_y + pad_y
+            line_bottom = mark_y + badge_height - pad_y
+            badge_draw.rectangle(
+                (line_left, line_top, line_left + accent_bar_width, line_bottom),
+                fill=accent_color,
+            )
+            image = Image.alpha_composite(image.convert("RGBA"), badge).convert("RGB")
+            draw = ImageDraw.Draw(image)
+            text_x = line_left + accent_bar_width + accent_gap
+            text_y = mark_y + pad_y - 1
+            draw.text((text_x, text_y), wordmark, fill="#8888a0", font=brand_font)
         image.save(image_path, format="JPEG", quality=92, optimize=True)
 
     def _apply_post_processing(self, image_path: Path) -> None:
         """
         Film-photography post-processing that kills the "AI look":
-          1. Film grain (6% monochromatic noise, stronger on midtones)
-          2. Desaturate 8% (AI models over-saturate)
-          3. Boost contrast 5% (adds punch without HDR look)
-          4. Subtle vignette 12% (natural lens falloff)
+          1. Desaturate to 88% (AI models over-saturate)
+          2. Boost contrast to 1.15 (stronger shadow/highlight separation)
+          3. Darken overall brightness to 87%
+          4. Film grain (6% monochromatic noise, stronger on midtones)
+          5. Pronounced vignette around 18-20% (natural lens falloff)
         """
         img = Image.open(image_path).convert("RGB")
 
-        # 1. Film grain — more visible on midtones, less on shadows/highlights
+        # 1. Desaturate 12%
+        img = ImageEnhance.Color(img).enhance(0.88)
+
+        # 2. Contrast +15%
+        img = ImageEnhance.Contrast(img).enhance(1.15)
+
+        # 3. Darken overall image by 13%
+        img = ImageEnhance.Brightness(img).enhance(0.87)
+
+        # 4. Film grain — more visible on midtones, less on shadows/highlights
         arr = np.array(img, dtype=np.float32)
         lum = arr.mean(axis=2, keepdims=True) / 255.0
         grain_mask = 1.0 - np.abs(lum - 0.5) * 2.0
@@ -710,104 +1155,20 @@ class AssetManager:
         arr = np.clip(arr + noise * grain_mask, 0, 255).astype(np.uint8)
         img = Image.fromarray(arr)
 
-        # 2. Desaturate 8%
-        img = ImageEnhance.Color(img).enhance(0.92)
-
-        # 3. Contrast +5%
-        img = ImageEnhance.Contrast(img).enhance(1.05)
-
-        # 4. Vignette — radial gradient darkening toward corners
+        # 5. Vignette — stronger radial gradient darkening toward corners
         width, height = img.size
-        vignette = Image.new("L", (width, height))
-        vig_arr = np.zeros((height, width), dtype=np.float32)
         cx, cy = width / 2.0, height / 2.0
         max_dist = np.sqrt(cx**2 + cy**2)
         ys, xs = np.mgrid[0:height, 0:width]
         dist = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2) / max_dist
-        # Smooth quintic falloff: only affects outer ~40% of the frame
-        vig_strength = np.clip((dist - 0.60) / 0.40, 0.0, 1.0) ** 2 * 0.12
+        # Stronger falloff: affects outer ~45% of the frame with ~19% darkening
+        vig_strength = np.clip((dist - 0.55) / 0.45, 0.0, 1.0) ** 2 * 0.19
         vig_alpha = np.clip((1.0 - vig_strength) * 255, 0, 255).astype(np.uint8)
         vignette = Image.fromarray(vig_alpha, mode="L")
         dark = Image.new("RGB", (width, height), (0, 0, 0))
         img = Image.composite(img, dark, vignette)
 
         img.save(image_path, format="JPEG", quality=92, optimize=True)
-
-    def _generate_with_google_genai_sync(
-        self,
-        *,
-        topic: str,
-        hook_text: str,
-        style_preset: str,
-        format: str,
-        vertical: str | None,
-        content_type: str,
-        include_logo: bool,
-        output: Path,
-    ) -> Path:
-        api_key = self._google_api_key()
-        if not api_key:
-            raise RuntimeError("GOOGLE_API_KEY is required for Gemini image generation")
-
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-        model = self._gemini_image_model()
-        image_bytes: bytes | None = None
-        if "imagen" in model.lower():
-            response = client.models.generate_images(
-                model=model,
-                prompt=self._build_gemini_prompt(
-                    topic=topic,
-                    hook_text=hook_text,
-                    style_preset=style_preset,
-                    format=format,
-                    vertical=vertical,
-                    content_type=content_type,
-                    include_logo=include_logo,
-                ),
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
-                    aspect_ratio="1:1",
-                    output_mime_type="image/jpeg",
-                    image_size="1K",
-                ),
-            )
-            generated_images = list(getattr(response, "generated_images", None) or [])
-            if not generated_images:
-                raise RuntimeError("Gemini image generation returned no images")
-            image = generated_images[0].image
-            image_bytes = getattr(image, "image_bytes", None) if image is not None else None
-        else:
-            response = client.models.generate_content(
-                model=model,
-                contents=self._build_gemini_prompt(
-                    topic=topic,
-                    hook_text=hook_text,
-                    style_preset=style_preset,
-                    format=format,
-                    vertical=vertical,
-                    content_type=content_type,
-                    include_logo=include_logo,
-                ),
-                config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
-            )
-            candidates = list(getattr(response, "candidates", None) or [])
-            for candidate in candidates:
-                content = getattr(candidate, "content", None)
-                for part in list(getattr(content, "parts", None) or []):
-                    inline_data = getattr(part, "inline_data", None)
-                    if inline_data is not None and getattr(inline_data, "data", None):
-                        image_bytes = inline_data.data
-                        break
-                if image_bytes:
-                    break
-        if not image_bytes:
-            raise RuntimeError("Gemini image generation returned no image bytes")
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(image_bytes)
-        return output
 
     async def _generate_with_gemini(
         self,
@@ -821,8 +1182,82 @@ class AssetManager:
         include_logo: bool,
         output: Path,
     ) -> Path:
-        return await asyncio.to_thread(
-            self._generate_with_google_genai_sync,
+        prompt = self._build_gemini_prompt(
+            topic=topic,
+            hook_text=hook_text,
+            style_preset=style_preset,
+            format=format,
+            vertical=vertical,
+            content_type=content_type,
+            include_logo=include_logo,
+        )
+        image_bytes = await self.gemini_provider.generate(
+            api_key=self._google_api_key(),
+            model=self._gemini_image_model(),
+            prompt=prompt,
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(image_bytes)
+        return output
+
+    async def _generate_with_flux(
+        self,
+        *,
+        topic: str,
+        hook_text: str,
+        style_preset: str,
+        format: str,
+        vertical: str | None,
+        content_type: str,
+        include_logo: bool,
+        output: Path,
+    ) -> Path:
+        prompt = self._build_gemini_prompt(
+            topic=topic,
+            hook_text=hook_text,
+            style_preset=style_preset,
+            format=format,
+            vertical=vertical,
+            content_type=content_type,
+            include_logo=include_logo,
+        )
+        image_bytes = await self.flux_provider.generate(
+            api_key=self._fal_api_key(),
+            model=self._fal_model(),
+            prompt=prompt,
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(image_bytes)
+        return output
+
+    async def _generate_background(
+        self,
+        *,
+        topic: str,
+        hook_text: str,
+        style_preset: str,
+        format: str,
+        vertical: str | None,
+        content_type: str,
+        include_logo: bool,
+        output: Path,
+    ) -> Path:
+        provider_name = self.provider_router.select_provider_name(style_preset)
+        if provider_name == "flux":
+            try:
+                return await self._generate_with_flux(
+                    topic=topic,
+                    hook_text=hook_text,
+                    style_preset=style_preset,
+                    format=format,
+                    vertical=vertical,
+                    content_type=content_type,
+                    include_logo=include_logo,
+                    output=output,
+                )
+            except Exception:
+                logger.exception("Flux generation failed for %s; falling back to Gemini", output.stem)
+        return await self._generate_with_gemini(
             topic=topic,
             hook_text=hook_text,
             style_preset=style_preset,
@@ -848,7 +1283,7 @@ class AssetManager:
         output_id = str(asset_id or hashlib.sha1(f"{topic}|{hook_text}|{style_preset}|{format}|{vertical}|{content_type}|{include_logo}".encode()).hexdigest()[:16]).strip()
         output = Path(gettempdir()) / f"{output_id}.jpg"
         try:
-            await self._generate_with_gemini(
+            await self._generate_background(
                 topic=topic,
                 hook_text=hook_text,
                 style_preset=style_preset,
@@ -864,25 +1299,29 @@ class AssetManager:
             self._render_with_pillow(output)
             logger.info("Generated post image with Pillow fallback at %s", output)
         try:
+            self._apply_post_processing(output)
+        except Exception:
+            logger.exception("Post-processing failed for %s; skipping", output_id)
+        try:
             self._overlay_text_and_wordmark(
                 hook_text=hook_text,
-                topic=topic,
+                vertical=vertical,
                 include_logo=include_logo,
                 image_path=output,
             )
         except Exception:
             logger.exception("Image overlay failed for %s; rebuilding with Pillow background", output_id)
             self._render_with_pillow(output)
+            try:
+                self._apply_post_processing(output)
+            except Exception:
+                logger.exception("Post-processing failed during overlay recovery for %s; skipping", output_id)
             self._overlay_text_and_wordmark(
                 hook_text=hook_text,
-                topic=topic,
+                vertical=vertical,
                 include_logo=include_logo,
                 image_path=output,
             )
-        try:
-            self._apply_post_processing(output)
-        except Exception:
-            logger.exception("Post-processing failed for %s; skipping", output_id)
         return await self.upload_image(str(output))
 
     async def generate_post_image_bytes(
@@ -914,7 +1353,7 @@ class AssetManager:
         effective_topic = custom_prompt or topic
 
         try:
-            await self._generate_with_gemini(
+            await self._generate_background(
                 topic=effective_topic,
                 hook_text=hook_text,
                 style_preset=style_preset,
@@ -929,26 +1368,30 @@ class AssetManager:
             self._render_with_pillow(output)
 
         try:
+            self._apply_post_processing(output)
+        except Exception:
+            logger.exception("Post-processing failed in QC pipeline; skipping")
+
+        try:
             self._overlay_text_and_wordmark(
                 hook_text=hook_text,
-                topic=topic,
+                vertical=vertical,
                 include_logo=include_logo,
                 image_path=output,
             )
         except Exception:
             logger.exception("Overlay failed in QC pipeline; rebuilding with Pillow")
             self._render_with_pillow(output)
+            try:
+                self._apply_post_processing(output)
+            except Exception:
+                logger.exception("Post-processing failed in QC pipeline recovery; skipping")
             self._overlay_text_and_wordmark(
                 hook_text=hook_text,
-                topic=topic,
+                vertical=vertical,
                 include_logo=include_logo,
                 image_path=output,
             )
-
-        try:
-            self._apply_post_processing(output)
-        except Exception:
-            logger.exception("Post-processing failed in QC pipeline; skipping")
 
         return ImageResult(image=output.read_bytes(), prompt_used=effective_topic, asset_id=output_id)
 

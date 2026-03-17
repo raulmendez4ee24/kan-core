@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from pathlib import Path
 
-from brain.asset_manager import AssetManager, READY_PROMPTS, build_image_prompt
+from brain.asset_manager import (
+    AssetManager,
+    ProviderRouter,
+    READY_PROMPTS,
+    build_image_prompt,
+    _select_creative_direction,
+)
 from brain.brand_director import ContentPost
 
 
@@ -127,6 +134,28 @@ def test_generate_post_image_falls_back_to_pillow_when_gemini_fails(monkeypatch,
     assert generated_path["path"].endswith("asset-post-1.jpg")
 
 
+def test_post_processing_uses_expected_order_and_strengths() -> None:
+    source = inspect.getsource(AssetManager._apply_post_processing)
+    color_index = source.index("ImageEnhance.Color")
+    contrast_index = source.index("ImageEnhance.Contrast")
+    brightness_index = source.index("ImageEnhance.Brightness")
+    grain_index = source.index("np.random.normal")
+    vignette_index = source.index("vig_strength =")
+
+    assert color_index < contrast_index < brightness_index < grain_index < vignette_index
+    assert "enhance(0.88)" in source
+    assert "enhance(1.15)" in source
+    assert "enhance(0.87)" in source
+    assert "* 0.19" in source
+
+
+def test_generate_post_image_runs_post_processing_before_overlay() -> None:
+    source = inspect.getsource(AssetManager.generate_post_image)
+    post_index = source.index("self._apply_post_processing(output)")
+    overlay_index = source.index("self._overlay_text_and_wordmark(")
+    assert post_index < overlay_index
+
+
 def test_gemini_model_uses_env_override_and_default(monkeypatch) -> None:
     manager = AssetManager()
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
@@ -134,6 +163,52 @@ def test_gemini_model_uses_env_override_and_default(monkeypatch) -> None:
 
     monkeypatch.setenv("GEMINI_MODEL", "models/imagen-4.0-generate-001")
     assert manager._gemini_image_model() == "models/imagen-4.0-generate-001"
+
+
+def test_provider_router_selects_flux_for_tech_noir_styles() -> None:
+    router = ProviderRouter()
+    assert router.select_provider_name("glassmorphism_dark") == "flux"
+    assert router.select_provider_name("terminal_luxury") == "flux"
+    assert router.select_provider_name("hardware_precision") == "flux"
+
+
+def test_provider_router_selects_gemini_for_editorial_family() -> None:
+    router = ProviderRouter()
+    assert router.select_provider_name("premium") == "gemini"
+    assert router.select_provider_name("editorial") == "gemini"
+    assert router.select_provider_name("human") == "gemini"
+    assert router.select_provider_name("documentary") == "gemini"
+
+
+def test_generate_background_falls_back_to_gemini_when_flux_fails(monkeypatch, tmp_path: Path) -> None:
+    manager = AssetManager()
+
+    async def _boom(**kwargs) -> Path:
+        raise RuntimeError("flux unavailable")
+
+    async def _fake_gemini(**kwargs) -> Path:
+        output = kwargs["output"]
+        output.write_bytes(b"gemini-jpeg")
+        return output
+
+    monkeypatch.setattr(manager, "_generate_with_flux", _boom)
+    monkeypatch.setattr(manager, "_generate_with_gemini", _fake_gemini)
+
+    result = asyncio.run(
+        manager._generate_background(
+            topic="Tema",
+            hook_text="Hook",
+            style_preset="glassmorphism_dark",
+            format="square",
+            vertical="clinics",
+            content_type="offer_launch",
+            include_logo=True,
+            output=tmp_path / "flux-fallback.jpg",
+        )
+    )
+
+    assert result.exists()
+    assert result.read_bytes() == b"gemini-jpeg"
 
 
 def test_build_image_prompt_uses_brand_rules_and_style_preset() -> None:
@@ -150,12 +225,69 @@ def test_build_image_prompt_uses_brand_rules_and_style_preset() -> None:
     assert "Tus pacientes esperan demasiado" in prompt
     assert "Vertical: clinics" in prompt
     assert "Style preset: premium" in prompt
+    assert "Creative director style:" in prompt
+    assert "Use real photography language or premium design direction" in prompt
     assert "ABSOLUTELY NO TEXT, WORDS, LETTERS, OR TYPOGRAPHY IN THE IMAGE." in prompt
     assert "Any text in the image will ruin the design." in prompt
     assert "No emojis, no icons, no symbols, no UI elements, no text overlays, no watermarks." in prompt
     assert "leave clean space for text overlay, no text in the image" in prompt
-    assert "#1a1a2e" in prompt
-    assert "#e94560" in prompt
+    assert "CRITICAL COLOR RULES:" in prompt
+    assert "The image must be 70%+ very dark (near black, #0a0a14)." in prompt
+    assert "NEVER a monochromatic teal/cyan/blue wash over everything." in prompt
+    assert "#0a0a14" in prompt
+    assert "orange accent #f97316" in prompt
+
+
+def test_creative_direction_is_deterministic_for_same_topic_and_vertical() -> None:
+    style_one = _select_creative_direction("Automatiza tu recepción", "clinics")
+    style_two = _select_creative_direction("Automatiza tu recepción", "clinics")
+    assert style_one["key"] == style_two["key"]
+
+
+def test_creative_direction_varies_across_topics() -> None:
+    style_one = _select_creative_direction("Automatiza tu recepción", "clinics")
+    style_two = _select_creative_direction("Cierra más ventas por WhatsApp", "clinics")
+    assert style_one["key"] != ""
+    assert style_two["key"] != ""
+
+
+def test_tech_noir_prompt_uses_real_photographed_scene() -> None:
+    prompt = build_image_prompt(
+        topic="Infraestructura premium",
+        hook_text="Tus leads se enfrían mientras respondes tarde.",
+        style_preset="glassmorphism_dark",
+        format="square",
+        vertical="clinics",
+        content_type="offer_launch",
+        include_logo=True,
+    )
+    assert "Modern server room behind glass partition at night." in prompt
+    assert "Real datacenter photography." in prompt
+    assert "NOT a 3D render. NOT CGI. A REAL photograph." in prompt
+    assert "Single light source with consistent shadows." in prompt
+
+
+def test_build_image_prompt_uses_vertical_accent_mapping() -> None:
+    dental_prompt = build_image_prompt(
+        topic="Más confianza clínica",
+        hook_text="Tus pacientes dudan si respondes tarde.",
+        style_preset="premium",
+        format="square",
+        vertical="dental",
+        content_type="offer_launch",
+        include_logo=True,
+    )
+    restaurant_prompt = build_image_prompt(
+        topic="Más reservas",
+        hook_text="Tu restaurante pierde mesas cuando respondes lento.",
+        style_preset="premium",
+        format="square",
+        vertical="restaurants",
+        content_type="offer_launch",
+        include_logo=True,
+    )
+    assert "blue accent #3b82f6" in dental_prompt
+    assert "warm amber accent #eab308" in restaurant_prompt
 
 
 def test_get_ready_prompt_returns_known_prompt() -> None:
@@ -180,12 +312,23 @@ def test_ready_prompts_contains_expected_common_post_types() -> None:
         assert key in READY_PROMPTS
 
 
-def test_font_cache_paths_use_tmp_directory() -> None:
+def test_font_cache_paths_use_assets_directory() -> None:
     manager = AssetManager()
     sora_path = manager._font_cache_path("Sora-Bold.ttf")
-    mono_path = manager._font_cache_path("JetBrains-Mono-Regular.ttf")
-    assert str(sora_path).endswith("/Sora-Bold.ttf")
-    assert str(mono_path).endswith("/JetBrains-Mono-Regular.ttf")
+    mono_path = manager._font_cache_path("JetBrains-Mono-Medium.ttf")
+    assert str(sora_path).endswith("/assets/fonts/Sora-Bold.ttf")
+    assert str(mono_path).endswith("/assets/fonts/JetBrains-Mono-Medium.ttf")
+
+
+def test_overlay_uses_pill_badge_and_accent_spec() -> None:
+    source = inspect.getsource(AssetManager._overlay_text_and_wordmark)
+    assert "letter_spacing = 0.5" in source
+    assert "accent_width = 60" in source
+    assert "accent_height = 3" in source
+    assert "fill=\"#8888a0\"" in source
+    assert "radius=6" in source
+    assert "fill=(10, 10, 20, int(255 * 0.8))" in source
+    assert "outline=(26, 26, 46, 255)" in source
 
 
 def test_strip_emojis_removes_problematic_characters() -> None:

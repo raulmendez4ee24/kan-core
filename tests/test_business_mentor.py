@@ -11,7 +11,9 @@ from brain.business_mentor import (
     BookingSnapshot,
     BusinessMentor,
     CrmSnapshot,
+    MentorDailyBriefing,
     MetaCampaignSnapshot,
+    RevenueSnapshot,
 )
 from brain.creative_memory import get_top_patterns
 from main import app
@@ -186,3 +188,33 @@ def test_mentor_ask_endpoint(monkeypatch) -> None:
     assert body["status"] in {"processing", "done"}
     if body["status"] == "done":
         assert body["answer"] == "mentor:Como cierro mas ventas?"
+
+
+def test_mentor_briefing_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("KAN_CLIENT_ID", "test-client")
+    monkeypatch.setenv("CLIENT_TOKENS_JSON", '{"test-client":"test-token"}')
+
+    async def _fake_daily_briefing(self: BusinessMentor) -> MentorDailyBriefing:
+        return MentorDailyBriefing(
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            revenue=RevenueSnapshot(),
+            crm=CrmSnapshot(active_leads=3, pipeline={"new": 3}, won_count=0, lost_count=0, close_rate=0.0),
+            meta_ads=MetaCampaignSnapshot(summary="Sin señales relevantes en Meta Ads."),
+            bookings=BookingSnapshot(),
+            top_priorities=["Cerrar pipeline activo."],
+            lesson_of_day="La velocidad importa.",
+            weekly_challenge="Agenda 3 reuniones.",
+            message="Mentor diario 6:30 AM\n\nIngreso ayer: $0 MXN",
+        )
+
+    monkeypatch.setattr("brain.business_mentor.BusinessMentor.daily_briefing", _fake_daily_briefing)
+    with TestClient(app) as client:
+        response = client.post(
+            "/mentor/briefing",
+            headers={"X-Client-Token": "test-token"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "sent"
+    assert "Mentor diario 6:30 AM" in payload["message_preview"]

@@ -21,16 +21,8 @@ _SUPPORTED_YCLOUD_EVENTS = [
 
 
 def _raw_secret() -> str:
-    """Return the configured secret, stripping any erroneous 'whsec_' prefix.
-
-    YCloud does not use Stripe-style prefixed secrets.  If the env var was
-    accidentally stored as 'whsec_<hex>', we strip the prefix so the HMAC key
-    matches what YCloud actually signed with.
-    """
-    secret = str(os.getenv("YCLOUD_WEBHOOK_SECRET") or "").strip()
-    if secret.startswith("whsec_"):
-        secret = secret[len("whsec_"):]
-    return secret
+    """Return the configured webhook secret exactly as stored in the environment."""
+    return str(os.getenv("YCLOUD_WEBHOOK_SECRET") or "").strip()
 
 
 def _compute_hmac(secret: str, timestamp: str, raw_body: bytes) -> str:

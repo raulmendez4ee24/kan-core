@@ -613,29 +613,23 @@ class TestYCloudWebhook:
         assert body["webhook_url"].endswith("/webhooks/ycloud/whatsapp")
         assert "whatsapp.inbound_message.received" in body["events"]
 
-    def test_whsec_prefix_is_stripped_and_verifies(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Railway env var stored with accidental 'whsec_' prefix must still verify correctly.
-
-        YCloud signs with the raw hex key; the whsec_ prefix is a Stripe convention
-        that must be stripped before computing the HMAC.
-        """
+    def test_whsec_prefixed_secret_verifies_as_stored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Webhook verification must use the exact secret string configured in env."""
         from routes.ycloud import _verify_ycloud_signature
 
-        raw_secret = "fb57cb8bdffe4a1aac13060f95d3aa33"
+        configured_secret = "whsec_fb57cb8bdffe4a1aac13060f95d3aa33"
         body = b'{"type":"whatsapp.inbound_message.received","payload":{"id":"msg_001"}}'
         timestamp = str(int(time.time()))
-        # YCloud signs with the raw secret (no prefix)
         digest = hmac.new(
-            raw_secret.encode("utf-8"),
+            configured_secret.encode("utf-8"),
             f"{timestamp}.".encode() + body,
             hashlib.sha256,
         ).hexdigest()
-        # Railway stored it with the spurious whsec_ prefix
-        monkeypatch.setenv("YCLOUD_WEBHOOK_SECRET", f"whsec_{raw_secret}")
+        monkeypatch.setenv("YCLOUD_WEBHOOK_SECRET", configured_secret)
         assert _verify_ycloud_signature(body, f"t={timestamp},s={digest}") is True
 
     def test_raw_secret_without_prefix_also_verifies(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Secret stored correctly (no prefix) must still pass after the stripping logic."""
+        """A non-prefixed secret must also verify as-is."""
         from routes.ycloud import _verify_ycloud_signature
 
         raw_secret = "fb57cb8bdffe4a1aac13060f95d3aa33"
@@ -649,8 +643,8 @@ class TestYCloudWebhook:
         monkeypatch.setenv("YCLOUD_WEBHOOK_SECRET", raw_secret)
         assert _verify_ycloud_signature(body, f"t={timestamp},s={digest}") is True
 
-    def test_wrong_secret_after_strip_still_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Stripping whsec_ must not accidentally accept signatures from a different key."""
+    def test_wrong_secret_still_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A signature from a different key must still be rejected."""
         from routes.ycloud import _verify_ycloud_signature
 
         body = b'{"type":"whatsapp.inbound_message.received"}'

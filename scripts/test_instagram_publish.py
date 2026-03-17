@@ -29,7 +29,7 @@ def _build_post() -> ContentPost:
         platform="instagram",
         pillar="test",
         format="static",
-        topic="Test de publicación automática",
+        topic="",
         hook=TEST_HOOK,
         full_script=TEST_CAPTION,
         visual_direction="Imagen de prueba generada y subida a Cloudinary para validar publicación automática.",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import date
 from pathlib import Path
 
@@ -54,6 +55,7 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
     sent_messages: list[str] = []
     scheduled: list[tuple[str, str, str | None]] = []
     generated_assets: list[dict[str, object]] = []
+    hook_calls: list[dict[str, str]] = []
 
     async def _fetch(_url: str) -> str:
         return """
@@ -81,6 +83,16 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
             generated_assets.append(kwargs)
             return f"https://cdn.example.com/{kwargs['asset_id']}.jpg"
 
+    async def _hook_generator(**kwargs):
+        hook_calls.append(
+            {
+                "topic": kwargs["topic"],
+                "pillar": kwargs["pillar"],
+                "platform": kwargs["platform"],
+            }
+        )
+        return "¿Cuánto te cuesta responder tarde?"
+
     monkeypatch.setenv("RAUL_WHATSAPP_TO", "+5215512345678")
     monkeypatch.setenv("YCLOUD_WHATSAPP_FROM", "+5215599999999")
 
@@ -91,6 +103,7 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
             whatsapp_sender=_fake_send,
             content_publisher=_StubPublisher(),
             asset_manager=_StubAssetManager(),
+            hook_generator=_hook_generator,
         )
         plan = await director.generate_weekly_content_plan(
             instagram_handle="kanlogic",
@@ -104,9 +117,12 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
         assert post.day_index == 1
         assert post.full_script
         assert post.media_url == "https://cdn.example.com/2026-03-16-1.jpg"
+        assert len(post.hook.split()) <= 6
+        assert post.hook == "¿Cuánto te cuesta responder tarde?"
         assert sent_messages
         assert scheduled
         assert generated_assets
+        assert hook_calls
         assert generated_assets[0]["topic"] == post.topic
         assert generated_assets[0]["hook_text"] == post.hook
         assert generated_assets[0]["style_preset"] == "premium"
@@ -114,8 +130,27 @@ def test_generate_weekly_content_plan_and_daily_post(tmp_path: Path, monkeypatch
         assert generated_assets[0]["content_type"] == "educational_tip"
         assert scheduled[0][2] == "https://cdn.example.com/2026-03-16-1.jpg"
         assert "Post de hoy" in sent_messages[0]
+        assert "¿Cuánto te cuesta responder tarde?" in sent_messages[0]
 
     asyncio.run(_run())
+
+
+def test_normalize_hook_enforces_max_six_words_and_removes_conditional(tmp_path: Path) -> None:
+    director = BrandDirector(db_path=tmp_path / "brand.sqlite3")
+    hook = director._normalize_hook(
+        "Si respondes tarde, pierdes dinero todos los días",
+        pillar="educacion",
+    )
+    assert len(hook.split()) <= 6
+    assert not hook.lower().startswith("si ")
+
+
+def test_generate_hook_prompt_contains_billboard_rules() -> None:
+    source = inspect.getsource(BrandDirector._generate_hook_with_claude)
+    assert "Generate a hook for an Instagram post. Maximum 6 words." in source
+    assert "Must stop the scroll." in source
+    assert "No conditional sentences." in source
+    assert "Think billboard, not paragraph." in source
 
 
 def test_analyze_feed_consistency_returns_specific_recommendations(tmp_path: Path) -> None:

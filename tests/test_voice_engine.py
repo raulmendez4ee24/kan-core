@@ -5,7 +5,14 @@ from typing import AsyncIterator
 
 import pytest
 
-from brain.voice_engine import CallResult, VoiceEngine
+import brain.voice_engine as voice_engine
+from brain.voice_engine import (
+    CallResult,
+    VoiceEngine,
+    _default_synth,
+    _select_best_spanish_voice,
+    resolve_elevenlabs_voice_id,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +58,142 @@ def _engine(**overrides) -> VoiceEngine:
 async def _async_chunks(data: list[bytes]) -> AsyncIterator[bytes]:
     for chunk in data:
         yield chunk
+
+
+# ---------------------------------------------------------------------------
+# ElevenLabs voice resolution
+# ---------------------------------------------------------------------------
+
+
+def test_select_best_spanish_voice_prefers_mexican_professional() -> None:
+    voices = [
+        {
+            "voice_id": "voice_latam_social",
+            "name": "Mario",
+            "labels": {
+                "language": "es",
+                "accent": "latin american",
+                "use_case": "conversational",
+                "descriptive": "excited",
+            },
+            "category": "professional",
+            "description": "Animated Spanish voice.",
+            "preview_url": "https://cdn.example/mario.mp3",
+        },
+        {
+            "voice_id": "voice_mx_pro",
+            "name": "El Marino Narrador",
+            "labels": {
+                "language": "es",
+                "accent": "mexican",
+                "use_case": "narrative_story",
+                "descriptive": "professional",
+            },
+            "category": "professional",
+            "description": "Podcast host calm and professional.",
+            "preview_url": "https://cdn.example/marino.mp3",
+        },
+        {
+            "voice_id": "voice_en",
+            "name": "Roger",
+            "labels": {"language": "en", "accent": "american"},
+            "category": "premade",
+            "description": "English voice.",
+        },
+    ]
+
+    assert _select_best_spanish_voice(voices) == "voice_mx_pro"
+
+
+def test_resolve_elevenlabs_voice_id_prefers_explicit_env(monkeypatch) -> None:
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "voice_env")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "key_123")
+    monkeypatch.setattr(voice_engine, "_AUTO_SELECTED_VOICE_ID", None)
+
+    async def _run() -> None:
+        assert await resolve_elevenlabs_voice_id() == "voice_env"
+
+    asyncio.run(_run())
+
+
+def test_resolve_elevenlabs_voice_id_auto_selects_spanish_voice(monkeypatch) -> None:
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "key_123")
+    monkeypatch.setattr(voice_engine, "_AUTO_SELECTED_VOICE_ID", None)
+
+    async def _fake_fetch(api_key: str) -> list[dict]:
+        assert api_key == "key_123"
+        return [
+            {
+                "voice_id": "voice_en",
+                "name": "Roger",
+                "labels": {"language": "en", "accent": "american"},
+                "category": "premade",
+                "description": "English voice.",
+            },
+            {
+                "voice_id": "voice_es",
+                "name": "El Marino Narrador",
+                "labels": {
+                    "language": "es",
+                    "accent": "mexican",
+                    "use_case": "narrative_story",
+                    "descriptive": "professional",
+                },
+                "category": "professional",
+                "description": "Podcast host calm and professional.",
+                "preview_url": "https://cdn.example/es.mp3",
+            },
+        ]
+
+    monkeypatch.setattr(voice_engine, "_fetch_elevenlabs_voices", _fake_fetch)
+
+    async def _run() -> None:
+        assert await resolve_elevenlabs_voice_id() == "voice_es"
+        assert voice_engine._AUTO_SELECTED_VOICE_ID == "voice_es"
+
+    asyncio.run(_run())
+
+
+def test_default_synth_uses_resolved_elevenlabs_voice(monkeypatch) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "key_123")
+    monkeypatch.setenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
+
+    async def _fake_resolve(*, api_key: str | None = None) -> str:
+        assert api_key == "key_123"
+        return "voice_spanish"
+
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        status_code = 200
+        content = b"fake_mp3"
+        text = ""
+
+    class _FakeClient:
+        async def __aenter__(self) -> "_FakeClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+        async def post(self, url: str, *, json: dict, headers: dict) -> _FakeResponse:
+            captured["url"] = url
+            captured["json"] = json
+            captured["headers"] = headers
+            return _FakeResponse()
+
+    monkeypatch.setattr(voice_engine, "resolve_elevenlabs_voice_id", _fake_resolve)
+    monkeypatch.setattr("httpx.AsyncClient", lambda timeout=30.0: _FakeClient())
+
+    async def _run() -> None:
+        audio = await _default_synth("Hola")
+        assert audio == b"fake_mp3"
+
+    asyncio.run(_run())
+    assert captured["url"] == "https://api.elevenlabs.io/v1/text-to-speech/voice_spanish"
+    assert captured["json"]["model_id"] == "eleven_multilingual_v2"
+    assert captured["json"]["language_code"] == "es"
 
 
 # ---------------------------------------------------------------------------

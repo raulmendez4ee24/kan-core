@@ -111,6 +111,11 @@ class MentorJobStatus(BaseModel):
     completed_at: str | None = None
 
 
+class MentorBriefingResponse(BaseModel):
+    status: str
+    message_preview: str
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -146,3 +151,18 @@ async def mentor_ask_status(
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
     return MentorJobStatus(**job)
+
+
+@router.post("/briefing", response_model=MentorBriefingResponse)
+async def mentor_send_briefing(
+    _: str = Depends(require_mentor_token),
+):
+    mentor = BusinessMentor()
+    briefing = await mentor.daily_briefing()
+    preview = str(briefing.message or "").strip()
+    if len(preview) > 240:
+        preview = preview[:237] + "..."
+    return MentorBriefingResponse(
+        status="sent",
+        message_preview=preview,
+    )

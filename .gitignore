@@ -26,8 +26,16 @@ google-creds.json
 # Node
 node_modules/
 
+# Scripts con credenciales hardcodeadas
+scripts/upload_cold_email_ops_to_vm.sh
+
 # CSV data exports (generated at runtime)
 leads.csv
 leads_*.csv
 cold_email_*.csv
 hunter_results.csv
+
+# Runtime databases and generated assets
+data/*.sqlite3
+data/*.db
+data/landings/

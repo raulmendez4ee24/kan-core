@@ -22,7 +22,7 @@ Required env vars:
   DEEPGRAM_API_KEY        — Deepgram key
 
 Optional:
-  ELEVENLABS_VOICE_ID     — overrides default voice (Adam)
+  ELEVENLABS_VOICE_ID     — overrides auto-selected Spanish ElevenLabs voice
   ELEVENLABS_MODEL_ID     — overrides default model (eleven_multilingual_v2)
   TEST_CALL_PORT          — local HTTP server port (default 7654)
   TEST_CALL_TIMEOUT       — seconds to wait for recording callback (default 45)
@@ -44,6 +44,8 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+
+from brain.voice_engine import resolve_elevenlabs_voice_id
 
 # ---------------------------------------------------------------------------
 # Load .env / .env.secrets
@@ -75,7 +77,6 @@ _load_env()
 
 _PORT   = int(os.getenv("TEST_CALL_PORT", "7654"))
 _TIMEOUT = int(os.getenv("TEST_CALL_TIMEOUT", "45"))
-_VOICE_ID = (os.getenv("ELEVENLABS_VOICE_ID") or "21m00Tcm4TlvDq8ikWAM").strip()  # Rachel (default, works on most plans)
 _MODEL_ID = (os.getenv("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2").strip()
 
 _GREETING = (
@@ -230,10 +231,13 @@ async def _synthesise(text: str) -> bytes:
     api_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
     if not api_key:
         err("ELEVENLABS_API_KEY not set")
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{_VOICE_ID}"
+    voice_id = await resolve_elevenlabs_voice_id(api_key=api_key)
+    info(f"Using ElevenLabs voice: {voice_id}")
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
     payload = {
         "text": text,
         "model_id": _MODEL_ID,
+        "language_code": "es",
         "voice_settings": {
             "stability": float(os.getenv("ELEVENLABS_STABILITY", "0.65")),
             "similarity_boost": float(os.getenv("ELEVENLABS_SIMILARITY", "0.82")),

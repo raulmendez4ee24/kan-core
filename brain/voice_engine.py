@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+import json
 import logging
 import math
 import os
@@ -25,6 +26,7 @@ logger = logging.getLogger("kan_core.voice_engine")
 # Rachel — 21m00Tcm4TlvDq8ikWAM  (clear female, multilingual — legacy default)
 # ---------------------------------------------------------------------------
 _JARVIS_DEFAULT_VOICE = "pNInz6obpgDQGcFmaJgB"  # Adam — deep, Jarvis-like
+_AUTO_SELECTED_VOICE_ID: str | None = None
 
 
 def _voice_provider() -> str:
@@ -130,15 +132,136 @@ async def _play_mp3_bytes(audio_bytes: bytes) -> bool:
                 pass
 
 
+def _elevenlabs_model_id() -> str:
+    return (os.getenv("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2").strip() or "eleven_multilingual_v2"
+
+
+async def _fetch_elevenlabs_voices(api_key: str) -> list[dict[str, Any]]:
+    import httpx
+
+    headers = {"xi-api-key": api_key}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get("https://api.elevenlabs.io/v1/voices", headers=headers)
+        if resp.status_code != 200:
+            raise RuntimeError(f"ElevenLabs voices error {resp.status_code}: {resp.text[:200]}")
+        data = resp.json()
+    voices = data.get("voices")
+    if isinstance(voices, list):
+        return [voice for voice in voices if isinstance(voice, dict)]
+    return []
+
+
+def _score_spanish_voice(voice: dict[str, Any]) -> float:
+    labels = voice.get("labels") if isinstance(voice.get("labels"), dict) else {}
+    name = str(voice.get("name") or "")
+    description = str(voice.get("description") or "")
+    blob = f"{name} {description} {json.dumps(labels, ensure_ascii=False)}".lower()
+
+    score = 0.0
+    language = str(labels.get("language") or "").strip().lower()
+    if language == "es":
+        score += 60
+    elif "spanish" in blob or "españ" in blob:
+        score += 42
+    else:
+        return -1.0
+
+    accent = str(labels.get("accent") or "").strip().lower()
+    if "mexican" in accent:
+        score += 30
+    elif "latin american" in accent or "latam" in accent:
+        score += 20
+    elif "peninsular" in accent:
+        score += 10
+
+    use_case = str(labels.get("use_case") or "").strip().lower()
+    if use_case == "conversational":
+        score += 14
+    elif use_case == "informative_educational":
+        score += 12
+    elif use_case == "social_media":
+        score += 10
+    elif use_case == "narrative_story":
+        score += 8
+
+    category = str(voice.get("category") or "").strip().lower()
+    if category == "professional":
+        score += 10
+    elif category == "cloned":
+        score += 8
+    elif category == "premade":
+        score += 4
+
+    descriptive = str(labels.get("descriptive") or "").strip().lower()
+    if descriptive in {"professional", "calm", "confident", "classy"}:
+        score += 4
+    elif descriptive in {"casual", "upbeat"}:
+        score += 2
+
+    if "professional" in blob:
+        score += 3
+    if "calm" in blob:
+        score += 3
+    if "podcast" in blob:
+        score += 2
+    if voice.get("preview_url"):
+        score += 1
+
+    return score
+
+
+def _select_best_spanish_voice(voices: list[dict[str, Any]]) -> str | None:
+    ranked: list[tuple[float, str, str]] = []
+    for voice in voices:
+        voice_id = str(voice.get("voice_id") or "").strip()
+        if not voice_id:
+            continue
+        score = _score_spanish_voice(voice)
+        if score < 0:
+            continue
+        ranked.append((score, str(voice.get("name") or ""), voice_id))
+
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (-item[0], item[1].lower(), item[2]))
+    return ranked[0][2]
+
+
+async def resolve_elevenlabs_voice_id(*, api_key: str | None = None) -> str:
+    global _AUTO_SELECTED_VOICE_ID
+
+    explicit = (os.getenv("ELEVENLABS_VOICE_ID") or "").strip()
+    if explicit:
+        return explicit
+
+    if _AUTO_SELECTED_VOICE_ID:
+        return _AUTO_SELECTED_VOICE_ID
+
+    key = (api_key or os.getenv("ELEVENLABS_API_KEY") or "").strip()
+    if not key:
+        return _JARVIS_DEFAULT_VOICE
+
+    try:
+        voices = await _fetch_elevenlabs_voices(key)
+        selected = _select_best_spanish_voice(voices)
+        if selected:
+            _AUTO_SELECTED_VOICE_ID = selected
+            logger.info("voice_engine: auto-selected ElevenLabs Spanish voice %s", selected)
+            return selected
+    except Exception as exc:
+        logger.warning("voice_engine: failed to auto-select ElevenLabs voice: %s", exc)
+
+    return _JARVIS_DEFAULT_VOICE
+
+
 async def _speak_with_elevenlabs(text: str) -> bool:
     api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
     if not api_key:
         logger.debug("ELEVENLABS_API_KEY not set — skipping ElevenLabs TTS")
         return False
 
-    # Voice selection: use ELEVENLABS_VOICE_ID or fall back to Adam (Jarvis-like)
-    voice_id = os.getenv("ELEVENLABS_VOICE_ID", _JARVIS_DEFAULT_VOICE).strip() or _JARVIS_DEFAULT_VOICE
-    model_id = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2").strip() or "eleven_multilingual_v2"
+    voice_id = await resolve_elevenlabs_voice_id(api_key=api_key)
+    model_id = _elevenlabs_model_id()
 
     # Voice quality settings — tuned for Jarvis-style delivery:
     #   stability=0.65 → consistent tone, minimal variation
@@ -153,6 +276,7 @@ async def _speak_with_elevenlabs(text: str) -> bool:
     payload = {
         "text": text[:5000],
         "model_id": model_id,
+        "language_code": "es",
         "voice_settings": {
             "stability": stability,
             "similarity_boost": similarity,
@@ -304,11 +428,12 @@ _TranscribeFn = Callable[[bytes], Awaitable[str]]
 
 
 def _el_voice() -> str:
-    return (os.getenv("ELEVENLABS_VOICE_ID") or _JARVIS_DEFAULT_VOICE).strip()
+    explicit = (os.getenv("ELEVENLABS_VOICE_ID") or "").strip()
+    return explicit or (_AUTO_SELECTED_VOICE_ID or _JARVIS_DEFAULT_VOICE)
 
 
 def _el_model() -> str:
-    return (os.getenv("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2").strip()
+    return _elevenlabs_model_id()
 
 
 async def _default_synth(text: str) -> bytes:
@@ -318,10 +443,12 @@ async def _default_synth(text: str) -> bytes:
     api_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
     if not api_key:
         raise RuntimeError("ELEVENLABS_API_KEY not set")
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{_el_voice()}"
+    voice_id = await resolve_elevenlabs_voice_id(api_key=api_key)
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
     payload = {
         "text": text[:5000],
         "model_id": _el_model(),
+        "language_code": "es",
         "voice_settings": {
             "stability": float(os.getenv("ELEVENLABS_STABILITY", "0.65")),
             "similarity_boost": float(os.getenv("ELEVENLABS_SIMILARITY", "0.82")),

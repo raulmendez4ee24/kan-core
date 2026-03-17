@@ -162,6 +162,10 @@ BRAND_STANDARDS = {
     "thresholds": {
         "overall_minimum": 75,
         "critical_category_minimum": 60,
+        "brand_director_overall_minimum": 65,
+        "brand_director_minor_fix_minimum": 60,
+        "brand_director_reject_below": 50,
+        "brand_director_ai_artifact_minimum": 70,
         "categories": {
             "text_quality": 80,
             "color_compliance": 70,
@@ -172,6 +176,24 @@ BRAND_STANDARDS = {
         },
     },
 }
+
+_BRAND_DIRECTOR_CONTENT_TYPES = {
+    "educational_tip",
+    "testimonial",
+    "offer_launch",
+    "workflow_upgrade",
+    "objection_breaker",
+    "case_study",
+    "brand_authority",
+}
+
+
+def _is_brand_director_context(content_type: str | None) -> bool:
+    return str(content_type or "").strip().lower() in _BRAND_DIRECTOR_CONTENT_TYPES
+
+
+def _use_brand_director_mode(content_type: str | None, brand_director_mode: bool = False) -> bool:
+    return bool(brand_director_mode or _is_brand_director_context(content_type))
 
 
 # ═══════════════════════════════════════════════════════
@@ -299,6 +321,7 @@ class QualityControlAgent:
         vertical: str | None = None,
         content_type: str = "general",
         attempt: int = 1,
+        brand_director_mode: bool = False,
     ) -> QualityReport:
         analysis = await self._analyze_with_vision(
             image=image,
@@ -308,12 +331,26 @@ class QualityControlAgent:
                 "hook": hook_text,
                 "vertical": vertical,
                 "content_type": content_type,
+                "brand_director_mode": brand_director_mode,
             },
         )
+        analysis["_content_type"] = content_type
+        analysis["_brand_director_mode"] = brand_director_mode
         scores = await self._score_categories(analysis)
         issues = await self._detect_issues(analysis, scores)
-        overall_score = self._calculate_overall_score(scores, issues)
-        verdict = self._decide_verdict(overall_score, issues, attempt)
+        overall_score = self._calculate_overall_score(
+            scores,
+            issues,
+            content_type=content_type,
+            brand_director_mode=brand_director_mode,
+        )
+        verdict = self._decide_verdict(
+            overall_score,
+            issues,
+            attempt,
+            content_type=content_type,
+            brand_director_mode=brand_director_mode,
+        )
 
         regeneration_prompt = None
         if verdict in [Verdict.REJECTED, Verdict.MINOR_FIXES]:
@@ -347,6 +384,17 @@ class QualityControlAgent:
         return report
 
     async def _analyze_with_vision(self, image: bytes, context: dict) -> dict:
+        brand_director_context = _use_brand_director_mode(
+            context.get("content_type"),
+            bool(context.get("brand_director_mode")),
+        )
+        text_artifact_guidance = (
+            "IMPORTANTE: para contenido automatizado del Brand Director, el sistema ya agrega un overlay oscuro "
+            "y reemplaza el texto con Pillow. Si ves letras, palabras o tipografía residual en el fondo generado, "
+            "trátalo como defecto menor de background, no como fallo crítico, salvo que rompa claramente la lectura final."
+            if brand_director_context
+            else "Si ves texto distorsionado, evalúalo con severidad normal."
+        )
         vision_prompt = f"""Eres un director de arte senior en una agencia de diseño premium.
 Revisa esta imagen de Instagram para la marca KAN Logic (agencia tech mexicana de IA).
 
@@ -356,6 +404,9 @@ CONTEXTO:
 - Vertical/industria: {context.get('vertical', 'general')}
 - Tipo de contenido: {context['content_type']}
 - Prompt original usado: {str(context['prompt'])[:500]}
+
+REGLA ESPECIAL DE TEXTO:
+{text_artifact_guidance}
 
 ANALIZA CADA ASPECTO y devuelve SOLO JSON válido con esta estructura exacta:
 
@@ -451,6 +502,18 @@ SÉ BRUTALMENTE HONESTO. Devuelve SOLO el JSON, sin markdown."""
             return {}
 
     async def _score_categories(self, analysis: dict) -> dict:
+        brand_director_context = _use_brand_director_mode(
+            analysis.get("_content_type"),
+            bool(analysis.get("_brand_director_mode")),
+        )
+        critical_artifacts = analysis.get("ai_artifact_analysis", {}).get("critical_artifacts", [])
+        text_residual_artifacts = [
+            str(item).lower() for item in critical_artifacts
+            if any(
+                token in str(item).lower()
+                for token in ("texto residual", "prompt visible", "text residual", "prompt text", "tipografía residual")
+            )
+        ]
         scores = {
             "text_quality": int(analysis.get("text_analysis", {}).get("typography_quality", 70)),
             "color_compliance": int(analysis.get("color_analysis", {}).get("color_harmony", 70)),
@@ -460,51 +523,94 @@ SÉ BRUTALMENTE HONESTO. Devuelve SOLO el JSON, sin markdown."""
             "emotional_impact": int(analysis.get("emotional_analysis", {}).get("emotional_impact_score", 65)),
         }
 
+        if brand_director_context:
+            # Brand Director assets are automated social content, not ad-grade hero images.
+            # Start these categories at a sane baseline and only deduct for severe defects.
+            scores["text_quality"] = max(scores["text_quality"], 70)
+            scores["ai_artifact_free"] = max(
+                scores["ai_artifact_free"],
+                int(self.standards["thresholds"].get("brand_director_ai_artifact_minimum", 70)),
+            )
+            scores["brand_consistency"] = max(scores["brand_consistency"], 70)
+
         if not analysis.get("color_analysis", {}).get("background_is_dark", True):
             scores["color_compliance"] = min(scores["color_compliance"], 20)
             scores["brand_consistency"] = min(scores["brand_consistency"], 30)
 
         text_distortions = analysis.get("text_analysis", {}).get("text_distortions", "ninguna")
         if text_distortions == "severas":
-            scores["text_quality"] = min(scores["text_quality"], 10)
+            floor = 58 if brand_director_context else 10
+            scores["text_quality"] = min(scores["text_quality"], floor)
         elif text_distortions == "menores":
-            scores["text_quality"] = min(scores["text_quality"], 50)
+            floor = 70 if brand_director_context else 50
+            scores["text_quality"] = min(scores["text_quality"], floor)
 
-        critical_artifacts = analysis.get("ai_artifact_analysis", {}).get("critical_artifacts", [])
-        if len(critical_artifacts) > 0:
-            scores["ai_artifact_free"] = min(scores["ai_artifact_free"], 20)
+        if len(critical_artifacts) > 0 and not (brand_director_context and len(text_residual_artifacts) == len(critical_artifacts)):
+            floor = 55 if brand_director_context else 20
+            scores["ai_artifact_free"] = min(scores["ai_artifact_free"], floor)
 
-        if analysis.get("brand_analysis", {}).get("looks_ai_generated", False):
+        if analysis.get("brand_analysis", {}).get("looks_ai_generated", False) and not brand_director_context:
             scores["brand_consistency"] = min(scores["brand_consistency"], 40)
 
-        if analysis.get("brand_analysis", {}).get("looks_like_canva_template", False):
+        if analysis.get("brand_analysis", {}).get("looks_like_canva_template", False) and not brand_director_context:
             scores["brand_consistency"] = min(scores["brand_consistency"], 30)
 
         return scores
 
     async def _detect_issues(self, analysis: dict, scores: dict) -> list[QualityIssue]:
         issues: list[QualityIssue] = []
+        brand_director_context = _use_brand_director_mode(
+            analysis.get("_content_type"),
+            bool(analysis.get("_brand_director_mode")),
+        )
 
         text = analysis.get("text_analysis", {})
         if text.get("text_distortions") == "severas":
             issues.append(QualityIssue(
-                category="text", severity=Severity.CRITICAL,
-                description="Texto severamente distorsionado o ilegible",
-                fix_instruction="Regenerar SIN texto en la imagen. Agregar texto como overlay post-generación con Pillow.",
+                category="text",
+                severity=Severity.MINOR if brand_director_context else Severity.CRITICAL,
+                description=(
+                    "Texto residual en el fondo generado"
+                    if brand_director_context
+                    else "Texto severamente distorsionado o ilegible"
+                ),
+                fix_instruction=(
+                    "Mantener el fondo limpio y confiar en el overlay oscuro + texto en Pillow."
+                    if brand_director_context
+                    else "Regenerar SIN texto en la imagen. Agregar texto como overlay post-generación con Pillow."
+                ),
                 confidence=0.95,
             ))
         if not text.get("is_text_legible", True) and text.get("is_text_present", False):
             issues.append(QualityIssue(
-                category="text", severity=Severity.CRITICAL,
-                description="Texto presente pero no legible a tamaño de celular",
-                fix_instruction="Aumentar tamaño del texto. Asegurar contraste mínimo 4.5:1.",
+                category="text",
+                severity=Severity.MINOR if brand_director_context else Severity.CRITICAL,
+                description=(
+                    "Texto residual de fondo no es legible"
+                    if brand_director_context
+                    else "Texto presente pero no legible a tamaño de celular"
+                ),
+                fix_instruction=(
+                    "No penalizar el fondo si el overlay final conserva lectura clara."
+                    if brand_director_context
+                    else "Aumentar tamaño del texto. Asegurar contraste mínimo 4.5:1."
+                ),
                 confidence=0.9,
             ))
         if not text.get("matches_intended_hook", True) and text.get("is_text_present", False):
             issues.append(QualityIssue(
-                category="text", severity=Severity.MAJOR,
-                description=f"Texto visible no coincide con hook. Se lee: '{text.get('text_reads_as', '???')}'",
-                fix_instruction="Usar overlay approach: generar imagen sin texto y agregar hook exacto con Pillow.",
+                category="text",
+                severity=Severity.MINOR if brand_director_context else Severity.MAJOR,
+                description=(
+                    f"Texto residual de fondo no coincide con hook. Se lee: '{text.get('text_reads_as', '???')}'"
+                    if brand_director_context
+                    else f"Texto visible no coincide con hook. Se lee: '{text.get('text_reads_as', '???')}'"
+                ),
+                fix_instruction=(
+                    "El hook final lo corrige Pillow; solo ajustar el fondo si la mancha tipográfica distrae demasiado."
+                    if brand_director_context
+                    else "Usar overlay approach: generar imagen sin texto y agregar hook exacto con Pillow."
+                ),
                 confidence=0.85,
             ))
         if not text.get("hierarchy_clear", True):
@@ -577,10 +683,25 @@ SÉ BRUTALMENTE HONESTO. Devuelve SOLO el JSON, sin markdown."""
                 confidence=0.9,
             ))
         for artifact in ai.get("critical_artifacts", []):
+            artifact_text = str(artifact)
+            lowered_artifact = artifact_text.lower()
+            is_text_residual = any(
+                token in lowered_artifact
+                for token in ("texto residual", "prompt visible", "text residual", "prompt text", "tipografía residual")
+            )
             issues.append(QualityIssue(
-                category="ai_artifact", severity=Severity.CRITICAL,
-                description=f"Artefacto crítico: {artifact}",
-                fix_instruction=f"CRITICAL: Avoid {artifact}. Photorealistic quality. No AI artifacts.",
+                category="ai_artifact",
+                severity=Severity.MINOR if brand_director_context and is_text_residual else Severity.CRITICAL,
+                description=(
+                    f"Residuo de texto visible en el fondo: {artifact_text}"
+                    if brand_director_context and is_text_residual
+                    else f"Artefacto crítico: {artifact_text}"
+                ),
+                fix_instruction=(
+                    "Reducir texto residual en el fondo; el overlay final ya protege la legibilidad."
+                    if brand_director_context and is_text_residual
+                    else f"CRITICAL: Avoid {artifact_text}. Photorealistic quality. No AI artifacts."
+                ),
                 confidence=0.85,
             ))
         if not ai.get("lighting_consistent", True):
@@ -594,21 +715,21 @@ SÉ BRUTALMENTE HONESTO. Devuelve SOLO el JSON, sin markdown."""
         brand = analysis.get("brand_analysis", {})
         if not brand.get("feels_premium", True):
             issues.append(QualityIssue(
-                category="brand", severity=Severity.MAJOR,
+                category="brand", severity=Severity.MINOR if brand_director_context else Severity.MAJOR,
                 description="La imagen no se siente premium",
                 fix_instruction="Simplificar. Más espacio negativo. Menos elementos. La sofisticación viene de la restraint.",
                 confidence=0.7,
             ))
         if brand.get("looks_ai_generated", False):
             issues.append(QualityIssue(
-                category="brand", severity=Severity.MAJOR,
+                category="brand", severity=Severity.MINOR if brand_director_context else Severity.MAJOR,
                 description="Se ve obviamente generada por IA",
                 fix_instruction="Must look designed by a human designer in Figma. No surreal elements. No over-processing.",
                 confidence=0.8,
             ))
         if not brand.get("could_agency_post_this", True):
             issues.append(QualityIssue(
-                category="brand", severity=Severity.MAJOR,
+                category="brand", severity=Severity.MINOR if brand_director_context else Severity.MAJOR,
                 description="No pasa el Agency Test",
                 fix_instruction="Verificar: tipografía perfecta, composición intencional, paleta cohesiva, acabado profesional.",
                 confidence=0.75,
@@ -625,7 +746,14 @@ SÉ BRUTALMENTE HONESTO. Devuelve SOLO el JSON, sin markdown."""
 
         return issues
 
-    def _calculate_overall_score(self, scores: dict, issues: list[QualityIssue]) -> float:
+    def _calculate_overall_score(
+        self,
+        scores: dict,
+        issues: list[QualityIssue],
+        *,
+        content_type: str | None = None,
+        brand_director_mode: bool = False,
+    ) -> float:
         weights = {
             "text_quality": 0.25,
             "ai_artifact_free": 0.25,
@@ -634,16 +762,17 @@ SÉ BRUTALMENTE HONESTO. Devuelve SOLO el JSON, sin markdown."""
             "color_compliance": 0.10,
             "emotional_impact": 0.08,
         }
+        brand_director_context = _use_brand_director_mode(content_type, brand_director_mode)
         weighted_score = sum(
             scores.get(cat, 50) * weight
             for cat, weight in weights.items()
         )
         critical_count = sum(1 for i in issues if i.severity == Severity.CRITICAL)
-        if critical_count > 0:
+        if critical_count > 0 and not brand_director_context:
             weighted_score *= max(0.3, 1 - (critical_count * 0.25))
         major_count = sum(1 for i in issues if i.severity == Severity.MAJOR)
         if major_count > 2:
-            weighted_score *= 0.85
+            weighted_score *= 0.92 if brand_director_context else 0.85
         return round(min(100, max(0, weighted_score)), 1)
 
     def _decide_verdict(
@@ -651,22 +780,44 @@ SÉ BRUTALMENTE HONESTO. Devuelve SOLO el JSON, sin markdown."""
         overall_score: float,
         issues: list[QualityIssue],
         attempt: int,
+        *,
+        content_type: str | None = None,
+        brand_director_mode: bool = False,
     ) -> Verdict:
         thresholds = self.standards["thresholds"]
-        has_critical = any(i.severity == Severity.CRITICAL for i in issues)
+        brand_director_context = _use_brand_director_mode(content_type, brand_director_mode)
+        overall_minimum = (
+            thresholds.get("brand_director_overall_minimum", 65)
+            if brand_director_context
+            else thresholds["overall_minimum"]
+        )
+        minor_fix_minimum = (
+            thresholds.get("brand_director_minor_fix_minimum", 60)
+            if brand_director_context
+            else overall_minimum
+        )
+        reject_below = (
+            thresholds.get("brand_director_reject_below", 50)
+            if brand_director_context
+            else 50
+        )
+        critical_count = sum(1 for i in issues if i.severity == Severity.CRITICAL)
         major_count = sum(1 for i in issues if i.severity == Severity.MAJOR)
 
-        if has_critical:
+        if critical_count >= 2:
             if attempt >= self.max_attempts:
                 return Verdict.ESCALATE
             return Verdict.REJECTED
 
-        if overall_score < thresholds["overall_minimum"]:
+        if overall_score < reject_below:
             if attempt >= self.max_attempts:
                 return Verdict.ESCALATE
             return Verdict.REJECTED
 
-        if overall_score >= thresholds["overall_minimum"] and major_count > 0:
+        if overall_score > minor_fix_minimum and critical_count == 0:
+            return Verdict.MINOR_FIXES
+
+        if overall_score >= overall_minimum and major_count > 0 and critical_count == 0:
             if major_count > 2:
                 if attempt >= self.max_attempts:
                     return Verdict.ESCALATE
@@ -676,8 +827,13 @@ SÉ BRUTALMENTE HONESTO. Devuelve SOLO el JSON, sin markdown."""
         if overall_score >= 85 and major_count == 0:
             return Verdict.APPROVED
 
-        if overall_score >= thresholds["overall_minimum"]:
+        if overall_score >= overall_minimum and critical_count == 0:
             return Verdict.APPROVED
+
+        if critical_count == 1:
+            if attempt >= self.max_attempts:
+                return Verdict.ESCALATE
+            return Verdict.MINOR_FIXES if brand_director_context and overall_score >= minor_fix_minimum else Verdict.REJECTED
 
         if attempt >= self.max_attempts:
             return Verdict.ESCALATE
@@ -767,6 +923,7 @@ class ImagePipeline:
         vertical: str | None = None,
         content_type: str = "general",
         platform: str = "instagram",
+        brand_director_mode: bool = False,
     ) -> dict[str, Any]:
         """
         Loop completo:
@@ -779,6 +936,7 @@ class ImagePipeline:
         current_prompt: str | None = None
         last_report: QualityReport | None = None
         last_image_result: ImageResult | None = None
+        effective_brand_director_mode = _use_brand_director_mode(content_type, brand_director_mode)
 
         for attempt in range(1, self.qc.max_attempts + 1):
             # ── GENERAR ──
@@ -801,6 +959,7 @@ class ImagePipeline:
                 vertical=vertical,
                 content_type=content_type,
                 attempt=attempt,
+                brand_director_mode=effective_brand_director_mode,
             )
             last_report = report
 
@@ -897,10 +1056,10 @@ class ImagePipeline:
             from tools.ycloud_client import send_ycloud_whatsapp_text_message
 
             raul_phone = os.getenv("RAUL_PHONE", os.getenv("OWNER_PHONE", ""))
-            sender = os.getenv("YCLOUD_WHATSAPP_NUMBER", os.getenv("YCLOUD_PHONE_NUMBER", ""))
+            sender = os.getenv("YCLOUD_WHATSAPP_FROM", "")
 
             if not raul_phone or not sender:
-                logger.warning("QC escalation: RAUL_PHONE or YCLOUD_WHATSAPP_NUMBER not set")
+                logger.warning("QC escalation: RAUL_PHONE or YCLOUD_WHATSAPP_FROM not set")
                 return
 
             issues_text = "\n".join(

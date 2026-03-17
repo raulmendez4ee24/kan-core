@@ -216,6 +216,7 @@ class BrandDirector:
         whatsapp_sender: Callable[..., Any] = send_ycloud_whatsapp_text_message,
         content_publisher: Any | None = None,
         asset_manager: Any | None = None,
+        hook_generator: Optional[Callable[..., Awaitable[str]]] = None,
     ) -> None:
         self.db_path = Path(db_path) if db_path else _db_path()
         self.fetcher = fetcher
@@ -232,6 +233,7 @@ class BrandDirector:
             self.asset_manager = AssetManager()
         else:
             self.asset_manager = asset_manager
+        self.hook_generator = hook_generator
 
     def _content_type_for_post(self, post: ContentPost) -> str:
         mapping = {
@@ -244,6 +246,103 @@ class BrandDirector:
             "autoridad": "brand_authority",
         }
         return mapping.get(str(post.pillar or "").strip(), "general")
+
+    def _fallback_hook_for_pillar(self, pillar: str) -> str:
+        return {
+            "educacion": "Responder tarde cuesta ventas.",
+            "prueba_social": "Esto cambió todo el cierre.",
+            "oferta": "Esto sí incluye el paquete.",
+            "behind_the_scenes": "Así opera un negocio ordenado.",
+            "objeciones": "Perder leads sale más caro.",
+            "casos_de_uso": "Esto automatizaría primero.",
+            "autoridad": "Arregla cierre antes del tráfico.",
+        }.get(pillar, "Automatiza antes de perder más.")
+
+    def _normalize_hook(self, raw_hook: str, *, pillar: str) -> str:
+        hook = re.sub(r"\s+", " ", str(raw_hook or "").strip())
+        hook = re.sub(r"^[\"'“”‘’]+|[\"'“”‘’]+$", "", hook).strip()
+        hook = hook.replace("\n", " ").strip()
+        if not hook:
+            return self._fallback_hook_for_pillar(pillar)
+        words = hook.split()
+        if words and words[0].lower() == "si":
+            words = words[1:]
+        filtered: list[str] = []
+        for word in words:
+            if word.lower() == "si" and not filtered:
+                continue
+            filtered.append(word)
+        hook = " ".join(filtered[:6]).strip(" ,;:-")
+        if not hook:
+            return self._fallback_hook_for_pillar(pillar)
+        if len(hook.split()) > 6:
+            hook = " ".join(hook.split()[:6])
+        return hook
+
+    async def _generate_hook_with_claude(
+        self,
+        *,
+        topic: str,
+        pillar: str,
+        platform: str,
+        brand_bible: BrandBible,
+    ) -> str:
+        if self.hook_generator is not None:
+            generated = await self.hook_generator(
+                topic=topic,
+                pillar=pillar,
+                platform=platform,
+                brand_bible=brand_bible,
+            )
+            return self._normalize_hook(generated, pillar=pillar)
+
+        api_key = str(os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key:
+            return self._fallback_hook_for_pillar(pillar)
+
+        model = str(os.getenv("BRAND_DIRECTOR_MODEL") or "claude-sonnet-4-6").strip()
+        prompt = (
+            "Generate a hook for an Instagram post. Maximum 6 words. Must stop the scroll. "
+            "Direct, provocative, or data-driven. No conditional sentences. No soft language. "
+            "Think billboard, not paragraph.\n\n"
+            f"Brand: {brand_bible.identity.who}\n"
+            f"What: {brand_bible.identity.what}\n"
+            f"Why: {brand_bible.identity.why}\n"
+            f"Tone: {brand_bible.identity.tone}\n"
+            f"Platform: {platform}\n"
+            f"Pillar: {pillar}\n"
+            f"Topic: {topic}\n\n"
+            "Return only the hook text. No quotes. No bullets. No explanation."
+        )
+
+        payload = {
+            "model": model,
+            "max_tokens": 40,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+            text = ""
+            for block in data.get("content", []):
+                if block.get("type") == "text":
+                    text = str(block.get("text") or "").strip()
+                    break
+            return self._normalize_hook(text, pillar=pillar)
+        except Exception:
+            logger.exception("Brand Director hook generation failed; using fallback hook")
+            return self._fallback_hook_for_pillar(pillar)
 
     async def initialize(self) -> None:
         async with aiosqlite.connect(self.db_path) as conn:
@@ -412,15 +511,7 @@ class BrandDirector:
             "casos_de_uso": "Caso por nicho",
             "autoridad": "Punto de vista experto",
         }.get(pillar, "Contenido estratégico")
-        hook = {
-            "educacion": "Si tu negocio depende de responder tarde, estás dejando dinero en la mesa.",
-            "prueba_social": "Así cambia un negocio cuando deja de contestar manualmente todo.",
-            "oferta": "Esto es exactamente lo que sí incluye nuestro paquete base.",
-            "behind_the_scenes": "Así se ve por dentro una operación comercial bien automatizada.",
-            "objeciones": "No es caro; caro es seguir perdiendo leads sin seguimiento.",
-            "casos_de_uso": "Si fueras una clínica o restaurante, esto sería lo primero que automatizaría.",
-            "autoridad": "La mayoría compra más tráfico antes de arreglar su cierre. Ese es el error.",
-        }.get(pillar, "Hay una forma más rentable de hacer esto.")
+        hook = self._fallback_hook_for_pillar(pillar)
         content_format = _DEFAULT_FORMATS[day_index % len(_DEFAULT_FORMATS)]
         best_time = _DEFAULT_TIMES[day_index % len(_DEFAULT_TIMES)]
         cta = "Escríbeme y te digo cómo aterrizarlo en tu negocio."
@@ -500,6 +591,28 @@ class BrandDirector:
         )
         return local_dt.astimezone(timezone.utc)
 
+    def _rebuild_post_with_hook(self, *, post: ContentPost, hook: str, brand_bible: BrandBible | None) -> ContentPost:
+        normalized_hook = self._normalize_hook(hook, pillar=post.pillar)
+        context_line = (
+            brand_bible.identity.what
+            if brand_bible is not None
+            else "desarrolla el problema, el contraste antes/después y la acción concreta"
+        )
+        full_script = (
+            f"{normalized_hook}\n\n"
+            f"Contexto: {context_line}\n"
+            f"Desarrollo: explica el problema, muestra el contraste antes/después y aterriza una acción concreta.\n"
+            f"Cierre: {post.cta}"
+        )
+        caption = f"{normalized_hook} {post.cta}".strip()
+        return post.model_copy(
+            update={
+                "hook": normalized_hook,
+                "full_script": full_script,
+                "caption": caption,
+            }
+        )
+
     async def generate_weekly_content_plan(
         self,
         *,
@@ -573,15 +686,38 @@ class BrandDirector:
     ) -> ContentPost:
         ref_day = reference_date or _today_local()
         week_start = _week_start(ref_day)
+        daily_bible: BrandBible | None = None
         plan = await self._load_weekly_plan(week_start=week_start)
         if not plan:
+            if instagram_handle or website_url:
+                daily_bible = await self.brand_audit(instagram_handle or "", website_url or "")
             plan = await self.generate_weekly_content_plan(
                 instagram_handle=instagram_handle,
                 website_url=website_url,
+                brand_bible=daily_bible,
                 reference_date=ref_day,
             )
         day_index = (ref_day - week_start).days
         post = plan[day_index % len(plan)]
+        if daily_bible is None and (instagram_handle or website_url):
+            daily_bible = await self.brand_audit(instagram_handle or "", website_url or "")
+        dynamic_hook = await self._generate_hook_with_claude(
+            topic=post.topic,
+            pillar=post.pillar,
+            platform=post.platform,
+            brand_bible=daily_bible or BrandBible(
+                identity=BrandIdentity(
+                    who="KAN Logic",
+                    what="Automatización y crecimiento para negocios.",
+                    why="Convertir más conversaciones en ventas.",
+                    tone="directa y comercial",
+                ),
+                visual_identity=BrandVisualIdentity(colors=[], fonts=[], style="premium"),
+                narrative=BrandNarrative(origin_story="", content_pillars=[]),
+                current_score=70.0,
+            ),
+        )
+        post = self._rebuild_post_with_hook(post=post, hook=dynamic_hook, brand_bible=daily_bible)
         message = (
             "Post de hoy\n\n"
             f"Plataforma: {post.platform}\n"
