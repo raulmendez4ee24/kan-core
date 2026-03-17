@@ -12,7 +12,8 @@ from time import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import httpx
-from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 if TYPE_CHECKING:
     from brain.brand_director import ContentPost
@@ -147,6 +148,180 @@ READY_PROMPTS: dict[str, str] = {
     "whatsapp_conversion": "Depict WhatsApp as a serious sales channel with immediate response and booked meetings.",
 }
 
+CREATIVE_DIRECTOR: list[dict[str, Any]] = [
+    {
+        "key": "cinematic_photography",
+        "description": "Shot on Sony A7R V, 35mm f/1.4, ISO 400, Kodak Portra 400 color grading, subtle halation, real film grain, shallow depth of field, golden hour bokeh.",
+        "references": "cinematic commercial photography, premium startup campaign stills",
+        "composition": "foreground subject with atmospheric depth, clean negative space for overlay on the left",
+        "anti_slop": "No fake UI, no plastic skin, no warped hands, no duplicate objects, no synthetic corporate stock-photo smiles, no floating interface elements.",
+    },
+    {
+        "key": "editorial_dark",
+        "description": "Canon 5D Mark IV editorial lighting, Monocle and Wallpaper* magazine aesthetic, dramatic shadow falloff, controlled luxury color palette, tactile materials.",
+        "references": "Monocle cover story, Wallpaper* business editorial",
+        "composition": "magazine spread discipline, elegant asymmetry, restrained luxury negative space",
+        "anti_slop": "No generic Canva composition, no cheesy startup clichés, no fake app dashboards, no oversaturated glow, no amateur poster layout.",
+    },
+    {
+        "key": "urban_mexico",
+        "description": "Fujifilm X-T5 street photography, CDMX and Guadalajara urban texture, Roma Norte, Juarez, Condesa, Americana and Providencia references, sodium vapor and neon reflections, concrete and storefront grit.",
+        "references": "real Mexico City and Guadalajara night photography, independent commercial street editorial",
+        "composition": "street-level perspective, motion and depth, practical negative space against architecture or signage glow",
+        "anti_slop": "No cyberpunk parody, no sci-fi holograms, no generic neon tunnel, no fake Asian city cues, no tourist postcard look.",
+    },
+    {
+        "key": "minimal_studio",
+        "description": "Clean studio shot, controlled softbox lighting, high-end product photography feel, medium-format commercial precision, crisp edges, premium matte surfaces.",
+        "references": "Apple-adjacent product minimalism, premium direct-response studio campaign",
+        "composition": "single hero element, disciplined margins, generous negative space, minimal distractions",
+        "anti_slop": "No clutter, no random props, no busy textures, no cheesy gradients, no fake 3D UI panels.",
+    },
+    {
+        "key": "abstract_geometric",
+        "description": "Pure design composition, no photography, geometric forms, restrained gradients, glassmorphism accents, premium motion-brand still frame, editorial poster discipline.",
+        "references": "Swiss poster systems, premium SaaS motion-frame stills, abstract brand systems",
+        "composition": "shape-led hierarchy, layered depth, clean left-side negative space for overlay text",
+        "anti_slop": "No fake icons, no template blobs, no random Memphis shapes, no childish gradients, no stock illustration look.",
+    },
+    {
+        "key": "documentary",
+        "description": "Leica M11 documentary style, candid reportage photography, raw real business moment, natural available light, honest texture, restrained contrast, observational framing.",
+        "references": "reportage business photography, documentary entrepreneurship stories",
+        "composition": "candid lived-in moment with real context and a clean reading lane for overlay",
+        "anti_slop": "No posed call-center smiles, no sterile stock office setups, no uncanny expressions, no fake teamwork tableau.",
+    },
+]
+
+
+# ─── Anti-AI-slop prompt blocks ───────────────────────────────────────────────
+# Modular strings appended to the generation prompt to eliminate the 12 "tells"
+# that mark an image as AI-generated. Mix and match based on scene type.
+ANTI_AI_BLOCKS: dict[str, str] = {
+    "photography_real": (
+        "Shot on Sony A7IV with 35mm f/1.4 GM lens. Natural available light "
+        "from a single large window on the left side. ISO 400, slight grain visible. "
+        "Color science: natural Sony colors, not color-graded. "
+        "Subtle real-camera imperfections: micro-vignette in corners, very slight "
+        "chromatic aberration on high-contrast edges, natural lens vignetting. "
+        "This is an actual photograph — NOT a 3D render."
+    ),
+    "office_real": (
+        "A REAL office desk, not a styled stock photo setup. Signs of actual work: "
+        "a half-empty ceramic coffee mug (slightly chipped rim), 2-3 cables visible "
+        "but organized, a small plant with one slightly yellowing leaf, a notebook "
+        "with a pen on top. The desk surface has micro-scratches from daily use. "
+        "NOT magazine-perfect — lived-in but organized. "
+        "The wall behind has subtle plaster or painted-concrete texture, not perfectly smooth."
+    ),
+    "screen_realistic": (
+        "CRITICAL — DEVICE SCREEN: The laptop or phone screen MUST show one of: "
+        "(a) a dark-themed code editor (VS Code Dark+) with syntax-highlighted code "
+        "in blues/greens/oranges on a near-black background; "
+        "(b) a dark analytics dashboard with clean charts and a subtle screen glow "
+        "spilling onto the keyboard; "
+        "(c) the screen is OFF or CLOSED — showing only the aluminum exterior. "
+        "NEVER a blank white screen, gradient screen, generic UI mockup, or "
+        "floating hologram interface. "
+        "The screen must cast a subtle colored light spill onto surrounding surfaces."
+    ),
+    "lighting_natural": (
+        "LIGHTING (strict): single key light — large soft source from upper-left "
+        "(window or softbox) creating gentle shadows on the right side of all objects. "
+        "Fill is ambient bounce from the room, NOT a second light. "
+        "Shadows are mandatory — every object casts a soft shadow. No floating objects. "
+        "Light has warm color temperature (slightly amber daylight). "
+        "Natural falloff: brighter near the source, dimmer toward frame edges. "
+        "If a screen is on, its light spills a blue-ish tint onto nearby surfaces. "
+        "NEVER flat even lighting from all directions, HDR tonemapping, or competing "
+        "colored light sources."
+    ),
+    "color_grading": (
+        "COLOR GRADING: slightly desaturated like an unedited real photo. "
+        "Shadows push very slightly toward deep navy/teal (NOT purple). "
+        "Highlights neutral to slightly warm. Matte finish, NOT glossy HDR. "
+        "Medium contrast — not crushed blacks, not lifted shadows. "
+        "Saturation pulled back 8-10% from default. "
+        "ONE accent color (brand red/coral) is the only saturated element; "
+        "everything else is more muted. "
+        "Reference: Kodak Portra 400 or Fujifilm Pro 400H Lightroom preset — "
+        "film-like, organic, slightly nostalgic."
+    ),
+    "texture_real": (
+        "MATERIALS AND TEXTURES: "
+        "Wood: visible grain variation, subtle scratches, natural knots. "
+        "Metal (laptop, phone): fingerprint smudges at certain angles, micro-scratches on aluminum. "
+        "Fabric: visible weave pattern, slight wrinkles, NOT perfectly pressed. "
+        "Paper/notebook: slightly bent corners, pen indentations visible in raking light. "
+        "Coffee mug: ceramic glaze with subtle variations, possibly a small chip. "
+        "Glass: fingerprints and environment reflections visible at angles. "
+        "NEVER perfectly smooth uniform surfaces or visibly tiling textures."
+    ),
+    "composition_editorial": (
+        "COMPOSITION: rule of thirds — main subject at an intersection point, NOT dead center. "
+        "Slight 1-2 degree tilt for dynamism (NOT perfectly level). "
+        "Foreground element slightly blurred in nearest plane (edge of mug, corner of notebook) "
+        "creating depth layers. "
+        "35-45% of frame is negative space. Minimum 3 depth planes visible. "
+        "Frame extends beyond edges — objects cut by frame edges naturally. "
+        "NEVER perfectly centered, perfectly symmetrical, or bird's-eye view."
+    ),
+    "people_real": (
+        "IF A PERSON APPEARS: show from behind, side profile, or hands only — "
+        "AVOID full frontal face (uncanny valley risk). "
+        "If hands visible: show from back/side holding device, fingers naturally wrapped. "
+        "NEVER all 10 fingers splayed individually. "
+        "Skin: natural texture, color variation at knuckles, NOT airbrushed. "
+        "Clothing: real fabric with wrinkles, visible stitching. "
+        "Body language: relaxed, natural posture, slight slouch. NOT model-posed. "
+        "NEVER direct eye contact at camera, plastic skin, or fashion-model posing."
+    ),
+    "dark_mode_tech": (
+        "DARK MODE AESTHETIC: background is NOT pure black — use very dark navy (#0a0a14) "
+        "or very dark charcoal (#0d0d12) with subtle color depth and very faint texture/grain. "
+        "Elements emerge from darkness with subtle backlighting or edge highlights. "
+        "Any gradient in the background is BARELY perceptible — a 3-5% shift. "
+        "Glow effects are subtle: screen glow barely tints surrounding surfaces. "
+        "Overall feeling: premium tech office at night with only monitors on. "
+        "NEVER pure black backgrounds, neon colors, tron-grid, or visible RGB lighting."
+    ),
+}
+
+# Which blocks to inject for each style preset
+_STYLE_ANTI_AI_MAP: dict[str, list[str]] = {
+    "premium":    ["photography_real", "lighting_natural", "color_grading", "texture_real",
+                   "composition_editorial", "dark_mode_tech", "screen_realistic"],
+    "default":    ["photography_real", "lighting_natural", "color_grading", "texture_real",
+                   "composition_editorial", "dark_mode_tech", "screen_realistic"],
+    "editorial":  ["photography_real", "lighting_natural", "color_grading", "texture_real",
+                   "composition_editorial"],
+    "bold":       ["lighting_natural", "color_grading", "dark_mode_tech", "screen_realistic"],
+    "human":      ["photography_real", "lighting_natural", "color_grading", "texture_real",
+                   "people_real", "screen_realistic"],
+    "data":       ["lighting_natural", "color_grading", "composition_editorial", "dark_mode_tech"],
+    "clinics":    ["photography_real", "lighting_natural", "color_grading", "texture_real"],
+    "dental":     ["photography_real", "lighting_natural", "color_grading", "texture_real"],
+    "restaurants":["photography_real", "lighting_natural", "color_grading", "texture_real"],
+    "spas":       ["photography_real", "lighting_natural", "color_grading", "texture_real"],
+    "barbershops":["photography_real", "lighting_natural", "color_grading", "texture_real",
+                   "composition_editorial"],
+    "real_estate":["photography_real", "lighting_natural", "color_grading", "texture_real",
+                   "composition_editorial"],
+}
+
+
+def _build_anti_ai_section(style_preset: str) -> str:
+    keys = _STYLE_ANTI_AI_MAP.get(style_preset, _STYLE_ANTI_AI_MAP["default"])
+    parts = [ANTI_AI_BLOCKS[k] for k in keys if k in ANTI_AI_BLOCKS]
+    return " ".join(parts)
+
+
+def _select_creative_direction(topic: str, vertical: str | None) -> dict[str, Any]:
+    seed = f"{str(topic or '').strip().lower()}|{str(vertical or '').strip().lower()}"
+    digest = hashlib.sha256(seed.encode()).hexdigest()
+    index = int(digest[:8], 16) % len(CREATIVE_DIRECTOR)
+    return CREATIVE_DIRECTOR[index]
+
 
 RequestFn = Callable[[str, str, dict[str, Any], dict[str, Any]], Awaitable[dict[str, Any] | None]]
 
@@ -165,10 +340,16 @@ def build_image_prompt(
     preset = STYLE_PRESETS.get(preset_key) or STYLE_PRESETS["premium"]
     vertical_key = str(vertical or "").strip().lower().replace(" ", "_")
     vertical_preset = STYLE_PRESETS.get(vertical_key) or {}
+    creative_direction = _select_creative_direction(topic, vertical_key or vertical)
     content_hint = READY_PROMPTS.get(str(content_type or "general").strip(), "")
     objects = ", ".join(preset.get("objects", []))
     visual_rules = ", ".join(BRAND["visual_rules"])
     voice = ", ".join(BRAND["voice"])
+    logo_instruction = (
+        "Leave subtle negative space in the bottom-right corner for a later KAN Logic wordmark overlay."
+        if include_logo
+        else "Do not reserve space for any logo."
+    )
     return (
         f"Create a professional 1080x1080 social media image for {BRAND['name']}. "
         f"Brand positioning: {BRAND['positioning']}. "
@@ -182,17 +363,24 @@ def build_image_prompt(
         f"Scene: {vertical_preset.get('scene', preset['scene'])}. "
         f"Composition: {vertical_preset.get('composition', preset['composition'])}. "
         f"Palette direction: {vertical_preset.get('palette_hint', preset['palette_hint'])}. "
+        f"Creative director style: {creative_direction['key']}. "
+        f"Creative brief: {creative_direction['description']}. "
+        f"Reference system: {creative_direction['references']}. "
+        f"Composition language: {creative_direction['composition']}. "
         f"Suggested objects or context: {objects}. "
         f"Content objective: {content_hint or 'Create a compelling general business content visual.'} "
-        f"Include logo in final composition: {'yes' if include_logo else 'no'}. "
+        f"Logo handling: {logo_instruction} "
         f"Brand colors must influence the image, especially {BRAND['palette']['background']} and {BRAND['palette']['accent']}. "
         f"Tone: {voice}. "
         "Make it polished, commercial, premium, and relevant for a modern Mexican business audience. "
+        "Use real photography language or premium design direction so the model thinks like a photographer or art director, not a generic image generator. "
         "ABSOLUTELY NO TEXT, WORDS, LETTERS, OR TYPOGRAPHY IN THE IMAGE. "
         "Pure background composition only. Any text in the image will ruin the design. "
         "No emojis, no icons, no symbols, no UI elements, no text overlays, no watermarks. "
         "Leave clean space for text overlay, no text in the image. "
-        f"Follow these visual rules: {visual_rules}."
+        f"Anti-AI-slop directives: {creative_direction['anti_slop']} "
+        f"Follow these visual rules: {visual_rules}. "
+        f"ANTI-AI PHOTOGRAPHY DIRECTIVES: {_build_anti_ai_section(preset_key)}"
     )
 
 
@@ -422,6 +610,32 @@ class AssetManager:
         overlay.alpha_composite(left_cover, (0, 0))
         return Image.alpha_composite(base, overlay)
 
+    def _fit_hook_text(
+        self,
+        *,
+        draw: ImageDraw.ImageDraw,
+        hook_text: str,
+        max_width: int,
+        max_height: int,
+    ) -> tuple[str, ImageFont.FreeTypeFont | ImageFont.ImageFont, int, tuple[int, int, int, int]]:
+        for font_size in range(80, 35, -2):
+            font = self._load_font(font_size, bold=True)
+            avg_char_width = max(1, int(font_size * 0.52))
+            wrap_width = max(10, max_width // avg_char_width)
+            wrapped = fill(hook_text, width=wrap_width)
+            spacing = max(8, int(font_size * 0.16))
+            bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=spacing)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            if text_width <= max_width and text_height <= max_height:
+                return wrapped, font, spacing, bbox
+
+        font = self._load_font(36, bold=True)
+        wrapped = fill(hook_text, width=max(10, max_width // max(1, int(36 * 0.52))))
+        spacing = 8
+        bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, spacing=spacing)
+        return wrapped, font, spacing, bbox
+
     def _overlay_text_and_wordmark(
         self,
         *,
@@ -431,19 +645,35 @@ class AssetManager:
         image_path: Path,
     ) -> None:
         cleaned_hook = self._strip_emojis(hook_text)
-        cleaned_topic = self._strip_emojis(topic)
         image = Image.open(image_path).convert("RGB")
         image = self._apply_text_gradient(image, top=84, bottom=520).convert("RGB")
         draw = ImageDraw.Draw(image)
         width, height = image.size
-        title_font = self._load_font(78, bold=True)
-        topic_font = self._load_mono_font(28)
         brand_font = self._load_font(28, bold=True)
-
-        wrapped_hook = fill(cleaned_hook, width=18)
-        wrapped_topic = fill(cleaned_topic, width=28)
-        draw.text((110, 130), wrapped_hook, fill=_TEXT, font=title_font, spacing=10)
-        draw.text((110, 395), wrapped_topic, fill=_MUTED, font=topic_font, spacing=8)
+        padding = 60
+        text_area_width = int(width * 0.60) - (padding * 2)
+        text_area_height = int(height * 0.50) - (padding * 2)
+        wrapped_hook, title_font, spacing, hook_bbox = self._fit_hook_text(
+            draw=draw,
+            hook_text=cleaned_hook,
+            max_width=text_area_width,
+            max_height=text_area_height,
+        )
+        hook_x = padding
+        accent_y = padding
+        accent_width = min(180, max(120, text_area_width // 3))
+        draw.rectangle(
+            (hook_x, accent_y, hook_x + accent_width, accent_y + 4),
+            fill=_ACCENT,
+        )
+        hook_y = accent_y + 28
+        draw.multiline_text(
+            (hook_x, hook_y),
+            wrapped_hook,
+            fill=_TEXT,
+            font=title_font,
+            spacing=spacing,
+        )
 
         if include_logo:
             wordmark = "KAN Logic"
@@ -459,6 +689,49 @@ class AssetManager:
             )
             draw.text((mark_x, mark_y), wordmark, fill=_ACCENT, font=brand_font)
         image.save(image_path, format="JPEG", quality=92, optimize=True)
+
+    def _apply_post_processing(self, image_path: Path) -> None:
+        """
+        Film-photography post-processing that kills the "AI look":
+          1. Film grain (6% monochromatic noise, stronger on midtones)
+          2. Desaturate 8% (AI models over-saturate)
+          3. Boost contrast 5% (adds punch without HDR look)
+          4. Subtle vignette 12% (natural lens falloff)
+        """
+        img = Image.open(image_path).convert("RGB")
+
+        # 1. Film grain — more visible on midtones, less on shadows/highlights
+        arr = np.array(img, dtype=np.float32)
+        lum = arr.mean(axis=2, keepdims=True) / 255.0
+        grain_mask = 1.0 - np.abs(lum - 0.5) * 2.0
+        grain_mask = np.clip(grain_mask, 0.3, 1.0)
+        noise = np.random.normal(0, 0.06 * 255, (img.height, img.width, 1))
+        noise = np.repeat(noise, 3, axis=2)
+        arr = np.clip(arr + noise * grain_mask, 0, 255).astype(np.uint8)
+        img = Image.fromarray(arr)
+
+        # 2. Desaturate 8%
+        img = ImageEnhance.Color(img).enhance(0.92)
+
+        # 3. Contrast +5%
+        img = ImageEnhance.Contrast(img).enhance(1.05)
+
+        # 4. Vignette — radial gradient darkening toward corners
+        width, height = img.size
+        vignette = Image.new("L", (width, height))
+        vig_arr = np.zeros((height, width), dtype=np.float32)
+        cx, cy = width / 2.0, height / 2.0
+        max_dist = np.sqrt(cx**2 + cy**2)
+        ys, xs = np.mgrid[0:height, 0:width]
+        dist = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2) / max_dist
+        # Smooth quintic falloff: only affects outer ~40% of the frame
+        vig_strength = np.clip((dist - 0.60) / 0.40, 0.0, 1.0) ** 2 * 0.12
+        vig_alpha = np.clip((1.0 - vig_strength) * 255, 0, 255).astype(np.uint8)
+        vignette = Image.fromarray(vig_alpha, mode="L")
+        dark = Image.new("RGB", (width, height), (0, 0, 0))
+        img = Image.composite(img, dark, vignette)
+
+        img.save(image_path, format="JPEG", quality=92, optimize=True)
 
     def _generate_with_google_genai_sync(
         self,
@@ -606,6 +879,10 @@ class AssetManager:
                 include_logo=include_logo,
                 image_path=output,
             )
+        try:
+            self._apply_post_processing(output)
+        except Exception:
+            logger.exception("Post-processing failed for %s; skipping", output_id)
         return await self.upload_image(str(output))
 
     async def generate_post_image_bytes(
@@ -667,6 +944,11 @@ class AssetManager:
                 include_logo=include_logo,
                 image_path=output,
             )
+
+        try:
+            self._apply_post_processing(output)
+        except Exception:
+            logger.exception("Post-processing failed in QC pipeline; skipping")
 
         return ImageResult(image=output.read_bytes(), prompt_used=effective_topic, asset_id=output_id)
 
