@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from typing import Any
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -37,7 +38,11 @@ class RevenueBrainScheduler:
         self.last_brand_daily_post: dict[str, object] | None = None
         self.last_brand_weekly_plan: list[dict[str, object]] | None = None
         self.last_published_content: list[dict[str, object]] | None = None
+        self.job_last_run: dict[str, str] = {}
         self._configured = False
+
+    def _record_job_run(self, job_id: str) -> None:
+        self.job_last_run[str(job_id)] = datetime.now(REVENUE_TZ).isoformat()
 
     def configure(self) -> None:
         if self._configured:
@@ -121,6 +126,7 @@ class RevenueBrainScheduler:
 
     async def run_daily_cycle(self) -> DailyBriefing | None:
         briefing = await self._run_with_logging("daily_cycle", self.revenue_brain.daily_cycle)
+        self._record_job_run("revenue-daily-cycle")
         if briefing is not None:
             self.last_daily_briefing = briefing
             try:
@@ -152,10 +158,12 @@ class RevenueBrainScheduler:
                 duration_ms,
                 len(called),
             )
+            self._record_job_run("revenue-confirmation-calls")
             return called
         except Exception:
             duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
             logger.exception("RevenueBrain confirmation_calls failed after %sms.", duration_ms)
+            self._record_job_run("revenue-confirmation-calls")
             return []
 
     async def run_content_publish_queue(self) -> list[dict[str, object]]:
@@ -170,14 +178,17 @@ class RevenueBrainScheduler:
                 duration_ms,
                 len(published),
             )
+            self._record_job_run("content-publish-hourly")
             return self.last_published_content
         except Exception:
             duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
             logger.exception("RevenueBrain content_publish_queue failed after %sms.", duration_ms)
+            self._record_job_run("content-publish-hourly")
             return []
 
     async def run_evening_check(self) -> DailyBriefing | None:
         briefing = await self._run_with_logging("evening_check", self.revenue_brain.evening_check)
+        self._record_job_run("revenue-evening-check")
         if briefing is not None:
             self.last_evening_briefing = briefing
             try:
@@ -193,6 +204,7 @@ class RevenueBrainScheduler:
 
     async def run_brand_daily_post(self) -> dict[str, object] | None:
         post = await self._run_with_logging("brand_daily_post", self.brand_director.generate_daily_post)
+        self._record_job_run("brand-daily-post")
         if post is not None:
             self.last_brand_daily_post = post.model_dump(mode="json")
             return self.last_brand_daily_post
@@ -200,6 +212,7 @@ class RevenueBrainScheduler:
 
     async def run_brand_weekly_plan(self) -> list[dict[str, object]] | None:
         plan = await self._run_with_logging("brand_weekly_plan", self.brand_director.generate_weekly_content_plan)
+        self._record_job_run("brand-weekly-plan")
         if plan is not None:
             self.last_brand_weekly_plan = [item.model_dump(mode="json") for item in plan]
             return self.last_brand_weekly_plan
@@ -207,6 +220,7 @@ class RevenueBrainScheduler:
 
     async def run_business_mentor_daily_briefing(self) -> dict[str, object] | None:
         briefing = await self._run_with_logging("business_mentor_daily_briefing", self.business_mentor.daily_briefing)
+        self._record_job_run("business-mentor-daily-briefing")
         if briefing is not None:
             self.last_mentor_daily_briefing = briefing.model_dump(mode="json")
             return self.last_mentor_daily_briefing
@@ -214,6 +228,7 @@ class RevenueBrainScheduler:
 
     async def run_business_mentor_weekly_review(self) -> dict[str, object] | None:
         review = await self._run_with_logging("business_mentor_weekly_review", self.business_mentor.weekly_review)
+        self._record_job_run("business-mentor-weekly-review")
         if review is not None:
             self.last_mentor_weekly_review = review.model_dump(mode="json")
             return self.last_mentor_weekly_review
