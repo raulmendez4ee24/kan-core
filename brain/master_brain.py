@@ -173,6 +173,50 @@ _EXECUTOR_TO_TOOL = {
     "desktop_loop": "desktop",
     "autonomous_agent": "desktop",
 }
+PROTECTED_ACTIONS = [
+    "delete_record",
+    "payment_over_500_mxn",
+    "system_config_change",
+]
+_SYSTEM_CONFIG_ACTIONS = frozenset(
+    {
+        "system_config_change",
+        "update_config",
+        "set_config",
+        "change_config",
+        "update_settings",
+        "change_settings",
+        "update_env",
+        "set_env",
+        "rotate_secret",
+        "update_policy",
+    }
+)
+_SYSTEM_CONFIG_KEYWORDS = frozenset(
+    {
+        "config",
+        "settings",
+        "env",
+        "environment",
+        "policy",
+        "secret",
+        "token",
+        "permission",
+        "role",
+        "system_config",
+    }
+)
+_PAYMENT_ACTION_KEYWORDS = frozenset(
+    {
+        "payment",
+        "billing",
+        "charge",
+        "invoice",
+        "cobro",
+        "cobrar",
+        "pago",
+    }
+)
 
 
 def _env_bool(name: str, default: str = "false") -> bool:
@@ -442,7 +486,9 @@ class MasterBrain:
                         "execution_plan": _safe_jsonable(plan),
                         "tool_routing": _safe_jsonable(routing),
                         "autonomy_level_applied": self.autonomy_level,
-                        "risk_bypassed": self.autonomy_level == "high",
+                        "risk_bypassed": bool(decision.get("risk_bypassed", False)),
+                        "confirmation_channel": str(decision.get("confirmation_channel") or ""),
+                        "protected_actions": list(decision.get("protected_actions") or []),
                     },
                     iterations=0,
                     steps=(pipeline_steps if self._include_debug_steps else []),
@@ -1195,12 +1241,42 @@ class MasterBrain:
         plan: List[Dict[str, Any]],
         autonomy_level: str,
     ) -> Dict[str, Any]:
+        protected_actions = self._protected_actions_for_plan(plan)
+        if protected_actions:
+            action_list = ", ".join(protected_actions)
+            return {
+                "needs_input": True,
+                "reason": (
+                    "La accion protegida requiere confirmacion por WhatsApp antes de ejecutar: "
+                    f"{action_list}."
+                ),
+                "confirmation_channel": "whatsapp",
+                "protected_actions": protected_actions,
+                "risk_bypassed": False,
+            }
+        if any(str(step.get("risk") or "").strip().lower() == "critical" for step in plan):
+            return {
+                "needs_input": True,
+                "reason": "La accion critica requiere confirmacion por WhatsApp antes de ejecutar.",
+                "confirmation_channel": "whatsapp",
+                "protected_actions": [],
+                "risk_bypassed": False,
+            }
         if autonomy_level == "medium":
             return {
                 "needs_input": True,
                 "reason": "AUTONOMY_LEVEL=medium requiere confirmación antes de ejecutar.",
+                "confirmation_channel": "",
+                "protected_actions": [],
+                "risk_bypassed": False,
             }
-        return {"needs_input": False, "reason": ""}
+        return {
+            "needs_input": False,
+            "reason": "",
+            "confirmation_channel": "",
+            "protected_actions": [],
+            "risk_bypassed": autonomy_level == "high",
+        }
 
     async def _execute_plan(
         self,
@@ -1629,6 +1705,105 @@ class MasterBrain:
         if action_type in {"desktop", "web"}:
             return "medium"
         return "low"
+
+    def _protected_actions_for_plan(self, plan: List[Dict[str, Any]]) -> List[str]:
+        detected: List[str] = []
+        for step in plan:
+            code = self._protected_action_for_step(step)
+            if code and code not in detected:
+                detected.append(code)
+        return detected
+
+    def _protected_action_for_step(self, step: Dict[str, Any]) -> Optional[str]:
+        action = str(step.get("action") or "").strip().lower()
+        action_type = str(step.get("action_type") or "").strip().lower()
+        title = str(step.get("title") or "").strip().lower()
+        args = step.get("args") if isinstance(step.get("args"), dict) else {}
+        probe = " ".join(
+            [
+                action,
+                action_type,
+                title,
+                json.dumps(args, ensure_ascii=True, sort_keys=True),
+            ]
+        ).lower()
+
+        if action == "delete_record":
+            return "delete_record"
+        if self._is_payment_over_500_mxn(action=action, action_type=action_type, args=args, probe=probe):
+            return "payment_over_500_mxn"
+        if self._is_system_config_change(action=action, action_type=action_type, probe=probe):
+            return "system_config_change"
+        return None
+
+    def _is_payment_over_500_mxn(
+        self,
+        *,
+        action: str,
+        action_type: str,
+        args: Dict[str, Any],
+        probe: str,
+    ) -> bool:
+        if not any(token in probe for token in _PAYMENT_ACTION_KEYWORDS):
+            return False
+
+        currency = str(
+            args.get("currency")
+            or args.get("currency_code")
+            or args.get("payment_currency")
+            or args.get("billing_currency")
+            or ""
+        ).strip().lower()
+        if currency and currency not in {"mxn", "peso", "pesos", "mexican peso", "mexican pesos"}:
+            return False
+
+        amount = self._extract_numeric_amount(args)
+        if amount is None:
+            return False
+        return amount > 500.0
+
+    def _is_system_config_change(self, *, action: str, action_type: str, probe: str) -> bool:
+        if action in _SYSTEM_CONFIG_ACTIONS:
+            return True
+        if action_type == "system_config":
+            return True
+        return any(keyword in probe for keyword in _SYSTEM_CONFIG_KEYWORDS)
+
+    def _extract_numeric_amount(self, payload: Any) -> Optional[float]:
+        if isinstance(payload, (int, float)) and not isinstance(payload, bool):
+            return float(payload)
+        if isinstance(payload, str):
+            token = payload.strip().replace(",", "")
+            try:
+                return float(token)
+            except ValueError:
+                return None
+        if isinstance(payload, dict):
+            preferred_keys = (
+                "amount",
+                "amount_mxn",
+                "payment_amount",
+                "charge_amount",
+                "total",
+                "subtotal",
+                "value",
+                "price",
+            )
+            for key in preferred_keys:
+                if key in payload:
+                    amount = self._extract_numeric_amount(payload.get(key))
+                    if amount is not None:
+                        return amount
+            for value in payload.values():
+                amount = self._extract_numeric_amount(value)
+                if amount is not None:
+                    return amount
+        if isinstance(payload, list):
+            for item in payload:
+                amount = self._extract_numeric_amount(item)
+                if amount is not None:
+                    return amount
+        return None
 
     def _parse_client_uuid(self, raw: str) -> Optional[UUID]:
         try:

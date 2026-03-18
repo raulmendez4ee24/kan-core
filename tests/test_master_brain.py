@@ -105,7 +105,9 @@ def test_master_brain_high_executes_without_confirmation(monkeypatch: pytest.Mon
     monkeypatch.setenv("MASTER_BRAIN_ENABLE_LEARNING", "false")
 
     brain = MasterBrain(client_id=str(uuid.uuid4()))
+    monkeypatch.setattr(brain, "_infer_intent_heuristic", lambda *_args, **_kwargs: "business")
     monkeypatch.setattr(brain, "_load_context", AsyncMock(return_value={"intent": "business"}))
+    monkeypatch.setattr(brain, "_infer_intent", AsyncMock(return_value="business"))
     monkeypatch.setattr(
         brain,
         "_generate_strategy",
@@ -149,12 +151,14 @@ def test_master_brain_high_executes_without_confirmation(monkeypatch: pytest.Mon
     assert result["data"]["risk_bypassed"] is True
 
 
-def test_master_brain_high_executes_critical_steps_without_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_master_brain_high_blocks_protected_delete_record(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AUTONOMY_LEVEL", "high")
     monkeypatch.setenv("MASTER_BRAIN_ENABLE_LEARNING", "false")
 
     brain = MasterBrain(client_id=str(uuid.uuid4()))
+    monkeypatch.setattr(brain, "_infer_intent_heuristic", lambda *_args, **_kwargs: "business")
     monkeypatch.setattr(brain, "_load_context", AsyncMock(return_value={"intent": "business"}))
+    monkeypatch.setattr(brain, "_infer_intent", AsyncMock(return_value="business"))
     monkeypatch.setattr(
         brain,
         "_generate_strategy",
@@ -185,10 +189,95 @@ def test_master_brain_high_executes_critical_steps_without_confirmation(monkeypa
 
     result = asyncio.run(brain.run("elimina pedido 1001"))
 
-    assert exec_mock.await_count == 1
-    assert result["status"] == "completed"
-    assert result["needs_confirmation"] is False
-    assert result["data"]["risk_bypassed"] is True
+    assert exec_mock.await_count == 0
+    assert result["status"] == "blocked"
+    assert result["needs_confirmation"] is True
+    assert result["data"]["risk_bypassed"] is False
+    assert result["data"]["confirmation_channel"] == "whatsapp"
+    assert result["data"]["protected_actions"] == ["delete_record"]
+    assert "whatsapp" in result["summary"].lower()
+
+
+def test_master_brain_high_blocks_payment_over_500_mxn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTONOMY_LEVEL", "high")
+    monkeypatch.setenv("MASTER_BRAIN_ENABLE_LEARNING", "false")
+
+    brain = MasterBrain(client_id=str(uuid.uuid4()))
+    monkeypatch.setattr(brain, "_load_context", AsyncMock(return_value={"intent": "business"}))
+    monkeypatch.setattr(
+        brain,
+        "_generate_strategy",
+        AsyncMock(
+            return_value={
+                "strict_actions": [
+                    {
+                        "type": "analysis",
+                        "action": "create_payment",
+                        "params": {"amount": 750, "currency": "MXN"},
+                        "description": "Cobrar anticipo",
+                    }
+                ]
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        brain,
+        "_choose_tools",
+        AsyncMock(return_value={"selected_tool": "api", "routes": {"step-1": "n8n"}}),
+    )
+    exec_mock = AsyncMock(return_value=[{"status": "completed"}])
+    monkeypatch.setattr(brain, "_execute_plan", exec_mock)
+    monkeypatch.setattr(brain, "_learn", AsyncMock(return_value={"enabled": False}))
+
+    result = asyncio.run(brain.run("ejecuta el cobro del anticipo"))
+
+    assert exec_mock.await_count == 0
+    assert result["status"] == "blocked"
+    assert result["data"]["confirmation_channel"] == "whatsapp"
+    assert result["data"]["protected_actions"] == ["payment_over_500_mxn"]
+
+
+def test_master_brain_high_blocks_system_config_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTONOMY_LEVEL", "high")
+    monkeypatch.setenv("MASTER_BRAIN_ENABLE_LEARNING", "false")
+
+    brain = MasterBrain(client_id=str(uuid.uuid4()))
+    monkeypatch.setattr(brain, "_infer_intent_heuristic", lambda *_args, **_kwargs: "desktop")
+    monkeypatch.setattr(brain, "_load_context", AsyncMock(return_value={"intent": "desktop"}))
+    monkeypatch.setattr(brain, "_infer_intent", AsyncMock(return_value="desktop"))
+    monkeypatch.setattr(
+        brain,
+        "_generate_strategy",
+        AsyncMock(
+            return_value={
+                "strict_actions": [
+                    {
+                        "type": "analysis",
+                        "action": "update_config",
+                        "params": {"target": "system", "env_var": "OPENAI_API_KEY"},
+                        "description": "Cambiar configuracion del sistema",
+                    }
+                ]
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        brain,
+        "_choose_tools",
+        AsyncMock(return_value={"selected_tool": "desktop", "routes": {"step-1": "desktop_loop"}}),
+    )
+    exec_mock = AsyncMock(return_value=[{"status": "completed"}])
+    monkeypatch.setattr(brain, "_execute_plan", exec_mock)
+    monkeypatch.setattr(brain, "_learn", AsyncMock(return_value={"enabled": False}))
+
+    result = asyncio.run(
+        brain.run("cambia la configuracion del sistema y reinicia el servicio de backend")
+    )
+
+    assert exec_mock.await_count == 0
+    assert result["status"] == "blocked"
+    assert result["data"]["confirmation_channel"] == "whatsapp"
+    assert result["data"]["protected_actions"] == ["system_config_change"]
 
 
 def test_master_brain_execute_web_agent_uses_loop(monkeypatch: pytest.MonkeyPatch) -> None:

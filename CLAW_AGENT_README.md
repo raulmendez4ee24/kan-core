@@ -1,6 +1,8 @@
 # 🤖 Agente Autónomo Claw
 
-Agente completamente autónomo tipo "Open Claw" que controla tu computadora como un humano, descubre APIs automáticamente, las encripta, y toma decisiones inteligentes usando GPT.
+`AutonomousClawAgent` ya no mantiene una implementación separada. Hoy es un alias de compatibilidad hacia `brain.autonomous_agent.AutonomousAgent`, para no romper imports ni scripts existentes.
+
+La ejecución real vive en `brain/autonomous_agent.py`; el nombre "Claw" se conserva solo como capa legacy de compatibilidad.
 
 ## 🎯 Características
 
@@ -104,7 +106,8 @@ Claw> goal Descubrir todas las APIs de Stripe, crear integraciones, y probarlas
 
 ```
 brain/
-├── autonomous_claw_agent.py    # Agente principal autónomo
+├── autonomous_claw_agent.py    # Alias legacy -> AutonomousAgent
+├── autonomous_agent.py         # Runtime real de autonomía
 ├── api_discovery_engine.py     # Motor de descubrimiento de APIs
 └── system_permissions.py       # Gestión de permisos del sistema
 
@@ -151,6 +154,7 @@ Solución: `export DISPLAY=:0`
 
 ## 📝 Notas
 
+- `AutonomousClawAgent` existe por compatibilidad; el runtime real es `AutonomousAgent`
 - El agente es completamente autónomo y puede realizar acciones en tu computadora
 - Usa el modo `safe` para pruebas iniciales
 - Todas las APIs descubiertas se guardan automáticamente en la base de datos

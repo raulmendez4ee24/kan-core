@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -18,6 +19,27 @@ from tools.ycloud_client import send_ycloud_whatsapp_text_message
 
 logger = logging.getLogger("kan_core.brand_director")
 BRAND_TZ = ZoneInfo("America/Mexico_City")
+
+
+async def _ce_retry(coro_factory: Callable[[], Awaitable[Any]], *, name: str, max_retries: int = 2) -> Any:
+    """
+    Runs a CE API coroutine with exponential backoff on timeout.
+    Catches httpx.ReadTimeout and asyncio.TimeoutError and retries up to max_retries times.
+    Waits 5s before retry 1, 10s before retry 2.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return await coro_factory()
+        except (httpx.ReadTimeout, asyncio.TimeoutError) as exc:
+            if attempt < max_retries:
+                wait = (attempt + 1) * 5
+                logger.warning(
+                    "CE timeout on '%s' (attempt %d/%d) — retry in %ds",
+                    name, attempt + 1, max_retries + 1, wait,
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise exc
 
 _DEFAULT_PILLARS = [
     "educacion",
@@ -359,6 +381,11 @@ class BrandDirector:
                     generated_at TEXT NOT NULL,
                     content_json TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS alert_cooldown (
+                    key TEXT PRIMARY KEY,
+                    last_alert_at TEXT NOT NULL
+                );
                 """
             )
             await conn.commit()
@@ -670,12 +697,177 @@ class BrandDirector:
         payload = json.loads(str(row[0]))
         return [ContentPost.model_validate(item) for item in payload]
 
-    async def _send_to_raul(self, text: str) -> None:
+    async def _send_to_raul(self, text: str, *, bypass_cooldown: bool = False) -> None:
         to_number = str(os.getenv("RAUL_WHATSAPP_TO") or "").strip()
         from_number = str(os.getenv("YCLOUD_WHATSAPP_FROM") or "").strip()
         if not to_number or not from_number or not str(text or "").strip():
             return
+        if not bypass_cooldown:
+            cooldown_hours = float(os.getenv("BRAND_DIRECTOR_ALERT_COOLDOWN_HOURS") or "6")
+            now = datetime.now(timezone.utc)
+            await self.initialize()
+            async with aiosqlite.connect(self.db_path) as conn:
+                cursor = await conn.execute(
+                    "SELECT last_alert_at FROM alert_cooldown WHERE key = 'default'"
+                )
+                row = await cursor.fetchone()
+                await cursor.close()
+                if row:
+                    last_alert_at = datetime.fromisoformat(str(row[0]))
+                    elapsed = (now - last_alert_at).total_seconds() / 3600
+                    if elapsed < cooldown_hours:
+                        logger.debug(
+                            "_send_to_raul suppressed by cooldown (%.1fh < %.1fh)",
+                            elapsed,
+                            cooldown_hours,
+                        )
+                        return
+                await conn.execute(
+                    """
+                    INSERT INTO alert_cooldown (key, last_alert_at)
+                    VALUES ('default', ?)
+                    ON CONFLICT(key) DO UPDATE SET last_alert_at = excluded.last_alert_at
+                    """,
+                    (now.isoformat(),),
+                )
+                await conn.commit()
         await self.whatsapp_sender(from_number=from_number, to=to_number, text=text)
+
+    # ----------------------------------------------------------------
+    # BRAND DIRECTOR SYSTEM PROMPT — temperature 0.4, execution phase
+    # ----------------------------------------------------------------
+    _BD_SYSTEM = (
+        "Eres un director de marca que EJECUTA una visión creativa ya definida. "
+        "No improvisas — traduces un concepto creativo en un post completo listo para producir.\n\n"
+        "REGLAS DE COPY:\n"
+        "- El hook ya está decidido. No lo cambies. Úsalo exacto.\n"
+        "- El body copy expande el hook pero NO lo explica. Profundiza la provocación.\n"
+        "- Máximo 1200 caracteres de body. Español mexicano natural.\n"
+        "- CTA: parte de la conversación, no botón pegado al final.\n"
+        "- Emojis: máximo 3, solo si aportan. Cero es válido.\n"
+        "- Hashtags: máximo 15. 5 de nicho + 5 de alcance medio + 5 de alto volumen.\n\n"
+        "REGLAS DE VISUAL BRIEF:\n"
+        "- EXTREMADAMENTE específico. No 'foto estética'. Sí: composición, iluminación, "
+        "paleta hex, elementos, textura, mood, qué NO debe aparecer.\n"
+        "- Si la dirección incluye ruptura, el brief debe hacer que sea el punto focal.\n\n"
+        "Responde SOLO en JSON:\n"
+        "{\n"
+        '  "post": {\n'
+        '    "hook": "el hook ganador exacto",\n'
+        '    "body_copy": "el copy completo",\n'
+        '    "cta": "call to action (o null)",\n'
+        '    "hashtags": ["lista"],\n'
+        '    "suggested_time": "HH:MM"\n'
+        "  },\n"
+        '  "visual_brief": {\n'
+        '    "format": "single_image|carousel|reel_cover",\n'
+        '    "aspect_ratio": "1:1|4:5|9:16",\n'
+        '    "description": "descripción completa del visual",\n'
+        '    "color_palette": ["#hex1", "#hex2"],\n'
+        '    "typography": {"text_on_image": "texto o null", "font_mood": "estilo", "placement": "dónde"},\n'
+        '    "composition": "descripción espacial",\n'
+        '    "lighting": "tipo de iluminación",\n'
+        '    "must_avoid": ["elementos prohibidos"],\n'
+        '    "rupture_element": "cómo se manifiesta la ruptura visualmente",\n'
+        '    "style_preset_suggestion": "premium|editorial|human|documentary|glassmorphism_dark|terminal_luxury|custom"\n'
+        "  }\n"
+        "}"
+    )
+
+    async def _build_post_from_direction(
+        self,
+        *,
+        post: "ContentPost",
+        direction: dict,
+        best_hook: str,
+        brand_bible: "BrandBible",
+    ) -> "ContentPost":
+        """
+        Uses BRAND_DIRECTOR_SYSTEM (temp 0.4) to build the complete post
+        from the creative direction + hook. Falls back to _rebuild_post_with_hook.
+        """
+        api_key = str(os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key:
+            return self._rebuild_post_with_hook(post=post, hook=best_hook, brand_bible=brand_bible)
+
+        model = str(os.getenv("BRAND_DIRECTOR_MODEL") or "claude-sonnet-4-6").strip()
+        import json as _json
+        from brain.creative_engine.universal_director import parse_llm_json as _parse_llm_json
+
+        user_msg = (
+            f"DIRECCIÓN CREATIVA (con ruptura integrada):\n"
+            f"{_json.dumps(direction, ensure_ascii=False, indent=2)}\n\n"
+            f"HOOK GANADOR (usa exacto): {best_hook}\n\n"
+            f"BRAND DNA:\n"
+            f"- Marca: {brand_bible.identity.who}\n"
+            f"- Propuesta: {brand_bible.identity.what}\n"
+            f"- Por qué: {brand_bible.identity.why}\n"
+            f"- Tono: {brand_bible.identity.tone}\n"
+            f"- Pilar: {post.pillar} | Plataforma: {post.platform}\n\n"
+            "Produce el post completo. El hook NO se modifica. Responde solo en JSON."
+        )
+
+        payload = {
+            "model": model,
+            "max_tokens": 3000,
+            "temperature": 0.4,
+            "system": self._BD_SYSTEM,
+            "messages": [{"role": "user", "content": user_msg}],
+        }
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=40.0) as client:
+                response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            raw = ""
+            for block in data.get("content", []):
+                if block.get("type") == "text":
+                    raw = str(block.get("text") or "").strip()
+                    break
+
+            bd_out = _parse_llm_json(raw)
+            post_data = bd_out.get("post") or {}
+            visual = bd_out.get("visual_brief") or {}
+
+            hook = str(post_data.get("hook") or best_hook).strip()
+            body = str(post_data.get("body_copy") or "").strip()
+            cta = str(post_data.get("cta") or post.cta).strip()
+            hashtags = list(post_data.get("hashtags") or post.hashtags)
+            suggested_time = str(post_data.get("suggested_time") or post.best_posting_time)
+            visual_desc = str(visual.get("description") or post.visual_direction)
+            style_hint = str(visual.get("style_preset_suggestion") or "premium")
+
+            caption = f"{hook}\n\n{body[:400]}\n\n{cta}".strip() if body else f"{hook}\n\n{cta}"
+
+            updated = post.model_copy(
+                update={
+                    "hook": hook,
+                    "full_script": f"{hook}\n\n{body}" if body else hook,
+                    "caption": caption,
+                    "cta": cta,
+                    "hashtags": hashtags,
+                    "best_posting_time": suggested_time,
+                    "visual_direction": visual_desc,
+                }
+            )
+            # Attach style hint so image generation can use it
+            object.__setattr__(updated, "_style_hint", style_hint)
+            return updated
+
+        except Exception:
+            logger.exception("_build_post_from_direction failed; using rebuild fallback")
+            return self._rebuild_post_with_hook(post=post, hook=best_hook, brand_bible=brand_bible)
 
     async def generate_daily_post(
         self,
@@ -687,6 +879,8 @@ class BrandDirector:
         ref_day = reference_date or _today_local()
         week_start = _week_start(ref_day)
         daily_bible: BrandBible | None = None
+
+        # Load / generate the weekly skeleton plan
         plan = await self._load_weekly_plan(week_start=week_start)
         if not plan:
             if instagram_handle or website_url:
@@ -701,25 +895,150 @@ class BrandDirector:
         post = plan[day_index % len(plan)]
         if daily_bible is None and (instagram_handle or website_url):
             daily_bible = await self.brand_audit(instagram_handle or "", website_url or "")
-        dynamic_hook = await self._generate_hook_with_claude(
-            topic=post.topic,
-            pillar=post.pillar,
-            platform=post.platform,
-            brand_bible=daily_bible or BrandBible(
-                identity=BrandIdentity(
-                    who="KAN Logic",
-                    what="Automatización y crecimiento para negocios.",
-                    why="Convertir más conversaciones en ventas.",
-                    tone="directa y comercial",
-                ),
-                visual_identity=BrandVisualIdentity(colors=[], fonts=[], style="premium"),
-                narrative=BrandNarrative(origin_story="", content_pillars=[]),
-                current_score=70.0,
+
+        bible = daily_bible or BrandBible(
+            identity=BrandIdentity(
+                who="KAN Logic",
+                what="Automatización y crecimiento para negocios.",
+                why="Convertir más conversaciones en ventas.",
+                tone="directa y comercial",
             ),
+            visual_identity=BrandVisualIdentity(colors=[], fonts=[], style="premium"),
+            narrative=BrandNarrative(origin_story="", content_pillars=[]),
+            current_score=70.0,
         )
-        post = self._rebuild_post_with_hook(post=post, hook=dynamic_hook, brand_bible=daily_bible)
+
+        # ════════════════════════════════════════════════════════
+        # CREATIVE ENGINE v3 PIPELINE — image-first, critic async
+        # Order: hook_lab → image → brand director → QC → publish
+        # creative_critic fires async after publish (non-blocking).
+        # ════════════════════════════════════════════════════════
+        best_hook: str = self._fallback_hook_for_pillar(post.pillar)
+        _media_url_early: str | None = None
+        _style_preset = "premium"
+        _architect_prompt: dict | None = None
+
+        # ── Step 1: Context (cache reads — no LLM) ────────────
+        culture: dict = {}
+        competitor: dict = {}
+        top_hooks: list[str] = []
+        failed_hooks: list[str] = []
+        try:
+            from brain.creative_engine import culture_radar as _cr
+            from brain.creative_engine import competitor_watch as _cw
+            from brain.creative_memory import get_top_patterns
+            culture = await asyncio.wait_for(
+                _cr.scan(
+                    client_industry=str(
+                        bible.narrative.origin_story[:80]
+                        if bible.narrative.origin_story
+                        else "servicios digitales"
+                    ),
+                    client_audience="dueños de PyMEs y directores comerciales",
+                ),
+                timeout=15.0,
+            )
+            competitor = _cw._get_cached(_cw._week_start_str()) or {}
+            top_pats = get_top_patterns(domain="campaign_execution", limit=5)
+            top_hooks = [p.hook for p in top_pats if p.hook]
+            failed_hooks = list(competitor.get("hooks_to_avoid") or [])
+        except Exception:
+            logger.warning("CE step 1 (context) failed; continuing with empty context")
+
+        # ── Step 2: HookLab (FIRST — no direction needed) ─────
+        try:
+            from brain.creative_engine import hook_lab as _hlab
+            lab_result = await asyncio.wait_for(
+                _hlab.generate_hooks(
+                    topic=post.topic,
+                    pillar=post.pillar,
+                    platform=post.platform,
+                    brand_who=bible.identity.who,
+                    brand_what=bible.identity.what,
+                    brand_tone=bible.identity.tone,
+                    culture_context=str(culture.get("overall_mood") or ""),
+                    competitor_gap=str(competitor.get("opportunity_gap") or ""),
+                    top_hooks=top_hooks,
+                    failed_hooks=failed_hooks,
+                ),
+                timeout=160.0,
+            )
+            if lab_result.get("winner"):
+                best_hook = str(lab_result["winner"])
+                logger.info("HookLab winner: %s", best_hook[:60])
+        except Exception:
+            logger.warning("CE step 2 (hook_lab) failed or timed out; using fallback hook")
+
+        # ── Step 3: Image generation (IMMEDIATELY after hook) ─
+        try:
+            from brain.creative_engine.style_dna import get_best_style
+            _style_hint = getattr(post, "_style_hint", None)
+            _style_preset = _style_hint or get_best_style("kan_logic")
+        except Exception:
+            pass
+        try:
+            from brain.creative_engine.image_architect import build_cinematic_prompt
+            from brain.creative_engine.universal_director import brand_bible_to_dna
+            _bible_dna_img = brand_bible_to_dna(bible)
+            _architect_prompt = await asyncio.wait_for(
+                build_cinematic_prompt(
+                    topic=post.topic,
+                    hook_text=best_hook,
+                    content_type=self._content_type_for_post(post),
+                    pillar=post.pillar,
+                    vertical=str(post.vertical or ""),
+                    platform=post.platform,
+                    brand_dna=_bible_dna_img,
+                    creative_direction=None,
+                    rupture_description="",
+                ),
+                timeout=130.0,
+            )
+            if _architect_prompt.get("style_preset") and _architect_prompt["style_preset"] != "custom":
+                _style_preset = _architect_prompt["style_preset"]
+        except Exception:
+            logger.warning("CE step 3a (image_architect) failed; using base style")
+        if post.platform == "instagram":
+            try:
+                _media_url_early = await self.asset_manager.generate_post_image(
+                    topic=post.topic,
+                    hook_text=best_hook,
+                    style_preset=_style_preset,
+                    format="square",
+                    vertical=post.vertical,
+                    content_type=self._content_type_for_post(post),
+                    include_logo=True,
+                    asset_id=post.post_id,
+                    architect_prompt=_architect_prompt,
+                )
+                logger.info("CE step 3: early image generated → %s", (_media_url_early or "")[:60])
+            except Exception:
+                logger.exception("CE step 3b (image generation) failed; will retry after brand director")
+
+        # ── Step 4: hook_generator override (optional) ────────
+        if self.hook_generator is not None:
+            best_hook = await self._generate_hook_with_claude(
+                topic=post.topic,
+                pillar=post.pillar,
+                platform=post.platform,
+                brand_bible=bible,
+            )
+
+        # ════════════════════════════════════════════════════════
+        # Step 5 — Brand Director execution (temp 0.4, no critic direction)
+        # ════════════════════════════════════════════════════════
+        post = await self._build_post_from_direction(
+            post=post,
+            direction={},
+            best_hook=best_hook,
+            brand_bible=bible,
+        )
+
+        # ════════════════════════════════════════════════════════
+        # Step 6 — Attach image + QC + Schedule
+        # ════════════════════════════════════════════════════════
         message = (
-            "Post de hoy\n\n"
+            "Post de hoy (CE v3)\n\n"
             f"Plataforma: {post.platform}\n"
             f"Pilar: {post.pillar}\n"
             f"Formato: {post.format}\n"
@@ -730,20 +1049,211 @@ class BrandDirector:
             f"Hora sugerida: {post.best_posting_time}"
         )
         await self._send_to_raul(message)
+
         if post.platform == "instagram":
-            media_url = await self.asset_manager.generate_post_image(
-                topic=post.topic,
-                hook_text=post.hook,
-                style_preset="premium",
-                format="square",
-                vertical=post.vertical,
-                content_type=self._content_type_for_post(post),
-                include_logo=True,
-                asset_id=post.post_id,
-            )
-            post = post.model_copy(update={"media_url": media_url})
+            _is_carousel = str(post.format or "").lower() == "carousel"
+
+            if _is_carousel:
+                # ── Carousel path ──────────────────────────────────────────
+                _carousel_brief: dict = {}
+                try:
+                    from brain.creative_engine.carousel_architect import design_carousel
+                    from brain.creative_engine.universal_director import brand_bible_to_dna
+                    _bible_dna = brand_bible_to_dna(bible)
+                    _ca_direction: dict = {}
+                    _ca_hook = post.hook
+                    _ca_cta = post.cta or ""
+                    _ca_script = post.full_script or ""
+                    _carousel_brief = await asyncio.wait_for(
+                        design_carousel(
+                            creative_direction=_ca_direction,
+                            full_script=_ca_script,
+                            selected_hook=_ca_hook,
+                            cta=_ca_cta,
+                            brand_dna=_bible_dna,
+                            num_slides=7,
+                        ),
+                        timeout=130.0,
+                    )
+                except Exception:
+                    logger.exception("CarouselArchitect failed; falling back to single image")
+                    _is_carousel = False
+
+                if _is_carousel and _carousel_brief.get("slides"):
+                    try:
+                        carousel_urls = await self.asset_manager.generate_carousel(
+                            slides_briefs=list(_carousel_brief["slides"]),
+                            topic=post.topic,
+                            style_preset=_style_preset,
+                            include_logo=True,
+                        )
+                        if carousel_urls:
+                            post = post.model_copy(update={
+                                "media_url": carousel_urls[0],
+                                "carousel_urls": carousel_urls,
+                                "carousel_brief": _carousel_brief,
+                            })
+                        else:
+                            _is_carousel = False
+                    except Exception:
+                        logger.exception("Carousel image generation failed; falling back to single image")
+                        _is_carousel = False
+
+            if not _is_carousel:
+                # ── Single-image path ──────────────────────────────────────
+                if _media_url_early:
+                    # Image already generated in step 3 — reuse it
+                    post = post.model_copy(update={"media_url": _media_url_early})
+                else:
+                    # Step 3 failed — try once more with final direction/hook
+                    try:
+                        from brain.creative_engine.image_architect import build_cinematic_prompt
+                        from brain.creative_engine.universal_director import brand_bible_to_dna
+                        _bible_dna2 = brand_bible_to_dna(bible)
+                        _architect_prompt2 = await asyncio.wait_for(
+                            build_cinematic_prompt(
+                                topic=post.topic,
+                                hook_text=post.hook,
+                                content_type=self._content_type_for_post(post),
+                                pillar=post.pillar,
+                                vertical=str(post.vertical or ""),
+                                platform=post.platform,
+                                brand_dna=_bible_dna2,
+                                creative_direction=None,
+                                rupture_description="",
+                            ),
+                            timeout=130.0,
+                        )
+                        if _architect_prompt2.get("style_preset") and _architect_prompt2["style_preset"] != "custom":
+                            _style_preset = _architect_prompt2["style_preset"]
+                        _architect_prompt = _architect_prompt2
+                    except Exception:
+                        logger.warning("Late ImageArchitect also failed; using base style")
+                    media_url = await self.asset_manager.generate_post_image(
+                        topic=post.topic,
+                        hook_text=post.hook,
+                        style_preset=_style_preset,
+                        format="square",
+                        vertical=post.vertical,
+                        content_type=self._content_type_for_post(post),
+                        include_logo=True,
+                        asset_id=post.post_id,
+                        architect_prompt=_architect_prompt,
+                    )
+                    post = post.model_copy(update={"media_url": media_url})
+
+            # Creative QC
+            try:
+                from brain.agents.quality_control_agent import creative_review
+                qc_result = await creative_review(
+                    post_copy=post.caption or post.full_script,
+                    original_direction=None,
+                    rupture_description="",
+                )
+                verdict = str(qc_result.get("verdict") or "PUBLISH")
+                if verdict == "ESCALATE":
+                    await self._send_to_raul(
+                        f"⚠️ Creative QC ESCALATE\n"
+                        f"Post: {post.post_id}\n"
+                        f"Motivo: {qc_result.get('refinement_notes') or qc_result.get('regeneration_reason') or 'Revisar manualmente'}"
+                    )
+                elif verdict == "REFINE":
+                    logger.info("CreativeQC REFINE: %s", str(qc_result.get("refinement_notes") or "")[:100])
+                logger.info("CreativeQC verdict: %s", verdict)
+            except Exception:
+                logger.exception("CreativeQC failed; proceeding with publish")
+
             await self.content_publisher.schedule_post(
                 post,
                 self._publish_at_for_post(post, reference_date=ref_day),
             )
+
+            # Record in style_dna for future best_style selection
+            try:
+                from brain.creative_engine.style_dna import record_post_published
+                record_post_published("kan_logic", _style_preset)
+            except Exception:
+                pass
+
+            # ── Step 7: Fire creative_critic async (non-blocking) ──
+            asyncio.create_task(
+                self._run_creative_critic_async(
+                    post=post,
+                    bible=bible,
+                    culture=culture,
+                    competitor=competitor,
+                    top_hooks=top_hooks,
+                    failed_hooks=failed_hooks,
+                )
+            )
+
         return post
+
+    async def _run_creative_critic_async(
+        self,
+        *,
+        post: ContentPost,
+        bible: BrandBible,
+        culture: dict,
+        competitor: dict,
+        top_hooks: list,
+        failed_hooks: list,
+    ) -> None:
+        """Fire-and-forget: run strategist → critic → rebel after publish. Results are logged only."""
+        try:
+            from brain.agents.creative_strategist_agent import generate_creative_directions
+            brand_dna = {
+                "who": bible.identity.who,
+                "what": bible.identity.what,
+                "why": bible.identity.why,
+                "tone": bible.identity.tone,
+                "colors": bible.visual_identity.colors,
+                "style": bible.visual_identity.style,
+            }
+            strategist_result = await asyncio.wait_for(
+                generate_creative_directions(
+                    client_name=bible.identity.who,
+                    client_industry="servicios de automatización y CRM",
+                    client_audience="dueños de PyMEs y directores comerciales en México",
+                    platform=post.platform,
+                    content_pillar=post.pillar,
+                    brand_dna=brand_dna,
+                    culture_signals=list(culture.get("signals") or []),
+                    top_performers=top_hooks[:3],
+                    bottom_performers=failed_hooks[:2],
+                    competitor_summary=str(competitor.get("dominant_pattern") or ""),
+                ),
+                timeout=100.0,
+            )
+            directions = list(strategist_result.get("directions") or [])
+            if not directions:
+                return
+            from brain.agents.creative_critic_agent import evaluate_directions
+            critic_result = await asyncio.wait_for(
+                evaluate_directions(
+                    directions,
+                    client_context=f"{bible.identity.who} — {post.pillar}",
+                ),
+                timeout=130.0,
+            )
+            winner_info = critic_result.get("winner") or {}
+            winner_id = int(winner_info.get("direction_id") or 1)
+            winner_direction = next(
+                (d for d in directions if int(d.get("direction_id") or 0) == winner_id),
+                directions[0],
+            )
+            from brain.creative_engine import creative_rebel as _rebel
+            rebel_result = await asyncio.wait_for(
+                _rebel.apply_rupture(
+                    winner_direction=winner_direction,
+                    hooks_to_avoid=failed_hooks,
+                ),
+                timeout=100.0,
+            )
+            logger.info(
+                "CE async critic done for post %s | rupture: %s",
+                post.post_id,
+                str(rebel_result.get("rupture_description") or "")[:80],
+            )
+        except Exception:
+            logger.warning("CE async critic task failed for post %s", post.post_id)
