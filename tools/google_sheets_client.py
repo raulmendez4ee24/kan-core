@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 _log = logging.getLogger("kan_core.google_sheets_client")
 
@@ -118,7 +118,6 @@ def update_cells(spreadsheet_id: str, tab_name: str, updates: List[Dict[str, Any
     if not updates:
         return True
     try:
-        import gspread  # type: ignore
         book = open_spreadsheet(spreadsheet_id)
         sheet = book.worksheet(tab_name)
         for u in updates:

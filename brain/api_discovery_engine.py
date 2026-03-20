@@ -3,7 +3,6 @@ Motor de descubrimiento automático de APIs.
 Escanea sitios web, documentación, y código para encontrar endpoints de API.
 """
 import asyncio
-import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple

@@ -268,6 +268,30 @@ class HunterOperator:
             ON hunter_outbound_log(sent_date_local, status)
             """
         )
+        # A/B testing: add variant column if missing
+        try:
+            await db.execute("ALTER TABLE hunter_outbound_log ADD COLUMN variant TEXT")
+        except Exception:
+            pass  # column already exists
+        # A/B tests registry table
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ab_tests (
+                test_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                variants_json TEXT NOT NULL,
+                metric TEXT NOT NULL DEFAULT 'reply_rate',
+                status TEXT NOT NULL DEFAULT 'running',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ab_tests_status
+            ON ab_tests(status)
+            """
+        )
         await db.commit()
         return db
 
@@ -356,6 +380,7 @@ class HunterOperator:
         payload: dict[str, Any],
         response: dict[str, Any] | None,
         sent: bool,
+        variant: str | None = None,
     ) -> None:
         created_at = datetime.now(MX_TZ).isoformat()
         sent_at = created_at if sent else None
@@ -375,8 +400,9 @@ class HunterOperator:
                     response_json,
                     created_at,
                     sent_at,
-                    sent_date_local
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    sent_date_local,
+                    variant
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     normalized_phone,
@@ -390,6 +416,7 @@ class HunterOperator:
                     created_at,
                     sent_at,
                     sent_date_local,
+                    variant,
                 ),
             )
             await db.commit()
@@ -1148,6 +1175,117 @@ class HunterOperator:
             outreach_messages=outreach,
             product_gaps=product_gaps,
         )
+
+    # ------------------------------------------------------------------
+    # A/B Testing
+    # ------------------------------------------------------------------
+
+    async def create_ab_test(
+        self,
+        *,
+        test_id: str,
+        name: str,
+        variants: list[str],
+        metric: str = "reply_rate",
+    ) -> dict[str, Any]:
+        """Create a new A/B test with named variants."""
+        import json
+
+        created_at = datetime.now(MX_TZ).isoformat()
+        db = await self._connect_outbound_db()
+        try:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO ab_tests (test_id, name, variants_json, metric, status, created_at)
+                VALUES (?, ?, ?, ?, 'running', ?)
+                """,
+                (test_id, name, json.dumps(variants), metric, created_at),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+        return {
+            "test_id": test_id,
+            "name": name,
+            "variants": variants,
+            "metric": metric,
+            "status": "running",
+            "created_at": created_at,
+        }
+
+    async def assign_variant(self, *, test_id: str) -> str | None:
+        """Randomly assign a variant from a running A/B test."""
+        import json
+        import random
+
+        db = await self._connect_outbound_db()
+        try:
+            cursor = await db.execute(
+                "SELECT variants_json, status FROM ab_tests WHERE test_id = ?",
+                (test_id,),
+            )
+            row = await cursor.fetchone()
+        finally:
+            await db.close()
+        if not row or row["status"] != "running":
+            return None
+        variants = json.loads(row["variants_json"])
+        return random.choice(variants) if variants else None
+
+    async def get_ab_test_results(self, test_id: str) -> dict[str, Any] | None:
+        """Get performance results for an A/B test grouped by variant."""
+        import json
+
+        db = await self._connect_outbound_db()
+        try:
+            cursor = await db.execute(
+                "SELECT test_id, name, variants_json, metric, status FROM ab_tests WHERE test_id = ?",
+                (test_id,),
+            )
+            test_row = await cursor.fetchone()
+            if not test_row:
+                return None
+
+            variants = json.loads(test_row["variants_json"])
+            results = []
+            best_variant = None
+            best_value = -1.0
+
+            for variant_name in variants:
+                cursor = await db.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS total_sent,
+                        COUNT(CASE WHEN status = 'sent' THEN 1 END) AS delivered
+                    FROM hunter_outbound_log
+                    WHERE variant = ?
+                    """,
+                    (variant_name,),
+                )
+                row = await cursor.fetchone()
+                total = int(row["total_sent"] or 0) if row else 0
+                delivered = int(row["delivered"] or 0) if row else 0
+                rate = (delivered / total) if total > 0 else 0.0
+                results.append({
+                    "variant": variant_name,
+                    "total_sent": total,
+                    "delivered": delivered,
+                    "metric_value": round(rate, 4),
+                })
+                if rate > best_value and total > 0:
+                    best_value = rate
+                    best_variant = variant_name
+        finally:
+            await db.close()
+
+        return {
+            "test_id": test_row["test_id"],
+            "name": test_row["name"],
+            "status": test_row["status"],
+            "metric": test_row["metric"],
+            "variants": results,
+            "winner": best_variant,
+        }
 
 
 def json_dumps(payload: dict[str, Any]) -> str:

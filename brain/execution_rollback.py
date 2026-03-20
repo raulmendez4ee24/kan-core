@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession

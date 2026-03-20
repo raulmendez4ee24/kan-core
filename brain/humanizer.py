@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Optional, Set
 
 logger = logging.getLogger("kan_core.humanizer")
 

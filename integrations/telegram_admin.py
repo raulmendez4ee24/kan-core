@@ -6,13 +6,11 @@ from typing import Any, Dict
 
 import httpx
 
+from config.env_helpers import env_bool
+
 _LOG = logging.getLogger("kan_core.telegram_admin")
 _API_BASE = "https://api.telegram.org"
 _VALID_MODES = {"polling", "webhook", "off"}
-
-
-def _env_bool(name: str, default: str = "false") -> bool:
-    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes"}
 
 
 def telegram_token() -> str:
@@ -23,7 +21,7 @@ def resolve_telegram_mode() -> Dict[str, Any]:
     configured_mode = str(os.getenv("TELEGRAM_MODE") or "").strip().lower()
     token = telegram_token()
     webhook_url = str(os.getenv("TELEGRAM_WEBHOOK_URL") or "").strip()
-    legacy_polling = not configured_mode and _env_bool("ENABLE_TELEGRAM_POLLING", "false")
+    legacy_polling = not configured_mode and env_bool("ENABLE_TELEGRAM_POLLING", "false")
 
     if configured_mode in _VALID_MODES:
         mode = configured_mode

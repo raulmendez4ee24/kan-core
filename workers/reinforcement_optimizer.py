@@ -10,24 +10,12 @@ from uuid import UUID
 from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config.env_helpers import env_bool, env_int
 from database import AsyncSessionLocal, init_db
 from learning.reinforcement_optimizer import calibrate_org_learning_policy, refresh_learning_from_sources
 from models import Client
 
 logger = logging.getLogger("kan_core.workers.reinforcement_optimizer")
-
-
-def _env_bool(name: str, default: str) -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes"}
-
-
-def _env_int(name: str, default: int, *, min_value: int, max_value: int) -> int:
-    raw = os.getenv(name, str(default)).strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        value = int(default)
-    return max(min_value, min(value, max_value))
 
 
 def _parse_uuid_list(raw: str) -> List[UUID]:
@@ -55,11 +43,11 @@ class OptimizerConfig:
     @staticmethod
     def from_env() -> "OptimizerConfig":
         return OptimizerConfig(
-            enabled=_env_bool("ENABLE_REINFORCEMENT_OPTIMIZER", "false"),
-            interval_seconds=_env_int(
+            enabled=env_bool("ENABLE_REINFORCEMENT_OPTIMIZER", "false"),
+            interval_seconds=env_int(
                 "REINFORCEMENT_OPTIMIZER_INTERVAL_SECONDS", 86400, min_value=60, max_value=86400 * 7
             ),
-            max_orgs_per_tick=_env_int("REINFORCEMENT_OPTIMIZER_MAX_ORGS_PER_TICK", 200, min_value=1, max_value=2000),
+            max_orgs_per_tick=env_int("REINFORCEMENT_OPTIMIZER_MAX_ORGS_PER_TICK", 200, min_value=1, max_value=2000),
             target_org_ids=_parse_uuid_list(os.getenv("REINFORCEMENT_OPTIMIZER_TARGET_ORG_IDS", "")),
         )
 
@@ -72,7 +60,7 @@ def _configure_logging(level: str) -> None:
 
 
 async def _ensure_db_ready() -> None:
-    if _env_bool("AUTO_CREATE_DB", "false"):
+    if env_bool("AUTO_CREATE_DB", "false"):
         await init_db()
         return
     async with AsyncSessionLocal() as session:

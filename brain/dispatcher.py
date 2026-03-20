@@ -498,7 +498,6 @@ async def _run_telegram_agent(
     goal: str,
     update: Dict[str, Any],
 ) -> None:
-    import time
     from uuid import uuid4
     goal_text = str(goal or "").strip()
     run_id = uuid4().hex[:8]

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -12,6 +11,7 @@ from uuid import UUID, uuid4
 
 import httpx
 
+from config.env_helpers import env_bool
 from database import AsyncSessionLocal
 
 logger = logging.getLogger("kan_core.master_brain")
@@ -219,10 +219,6 @@ _PAYMENT_ACTION_KEYWORDS = frozenset(
 )
 
 
-def _env_bool(name: str, default: str = "false") -> bool:
-    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes"}
-
-
 def _safe_jsonable(value: Any) -> Any:
     if is_dataclass(value):
         return asdict(value)
@@ -280,10 +276,10 @@ class MasterBrain:
         self.run_id = str(run_id or uuid4().hex[:8])
         level = str(os.getenv("AUTONOMY_LEVEL", "high")).strip().lower()
         self.autonomy_level = level if level in _AUTONOMY_LEVELS else "high"
-        self._include_debug_steps = _env_bool("MASTER_BRAIN_INCLUDE_DEBUG_STEPS", "false")
-        self._enable_learning = _env_bool("MASTER_BRAIN_ENABLE_LEARNING", "true")
-        self._enable_world_model = _env_bool("MASTER_BRAIN_ENABLE_WORLD_MODEL", "true")
-        self._enable_web_research = _env_bool("MASTER_BRAIN_ENABLE_WEB_RESEARCH", "true")
+        self._include_debug_steps = env_bool("MASTER_BRAIN_INCLUDE_DEBUG_STEPS", "false")
+        self._enable_learning = env_bool("MASTER_BRAIN_ENABLE_LEARNING", "true")
+        self._enable_world_model = env_bool("MASTER_BRAIN_ENABLE_WORLD_MODEL", "true")
+        self._enable_web_research = env_bool("MASTER_BRAIN_ENABLE_WEB_RESEARCH", "true")
 
         from brain.continuous_improvement import run_continuous_optimization
         from brain.global_learning import refresh_global_learnings
@@ -318,7 +314,7 @@ class MasterBrain:
 
         try:
             hinted_intent = self._infer_intent_heuristic(goal_text)
-            if _env_bool("ENABLE_AUTONOMOUS_CASE_MANAGER", "false"):
+            if env_bool("ENABLE_AUTONOMOUS_CASE_MANAGER", "false"):
                 org_id = self._parse_client_uuid(self.client_id)
                 if org_id and hinted_intent != "chat":
                     from brain.autonomous_case_manager import (
@@ -811,7 +807,7 @@ class MasterBrain:
         return "unknown"
 
     async def _infer_intent_with_llm(self, goal: str, context: Dict[str, Any]) -> str:
-        if not _env_bool("MASTER_BRAIN_ENABLE_INTENT_LLM", "true"):
+        if not env_bool("MASTER_BRAIN_ENABLE_INTENT_LLM", "true"):
             return "unknown"
         api_key = str(os.getenv("OPENAI_API_KEY") or "").strip()
         if not api_key:
@@ -907,7 +903,7 @@ class MasterBrain:
         strict_actions: List[Dict[str, Any]] = []
         strict_payload: Dict[str, Any] = {}
         strict_error = ""
-        if _env_bool("MASTER_BRAIN_USE_STRICT_PLANNER", "true") and intent not in {"desktop"}:
+        if env_bool("MASTER_BRAIN_USE_STRICT_PLANNER", "true") and intent not in {"desktop"}:
             try:
                 from brain.core import CognitiveEngine
                 from brain.strict_planner import StrictPlanner
@@ -935,7 +931,7 @@ class MasterBrain:
             except Exception as exc:
                 strict_error = str(exc)
 
-        if not strict_actions and _env_bool("MASTER_BRAIN_USE_ADAPTIVE_FALLBACK", "true"):
+        if not strict_actions and env_bool("MASTER_BRAIN_USE_ADAPTIVE_FALLBACK", "true"):
             org_id = self._parse_client_uuid(self.client_id)
             if org_id is not None:
                 try:
@@ -1313,7 +1309,7 @@ class MasterBrain:
                 "risk": str(step.get("risk") or "low"),
             }
             results.append(result)
-            if str(result["status"]) == "failed" and _env_bool("MASTER_BRAIN_STOP_ON_FAILURE", "false"):
+            if str(result["status"]) == "failed" and env_bool("MASTER_BRAIN_STOP_ON_FAILURE", "false"):
                 break
         return results
 
@@ -1447,11 +1443,11 @@ class MasterBrain:
                 step_timeout_seconds=float(
                     str(os.getenv("MASTER_BRAIN_DESKTOP_STEP_TIMEOUT_SEC") or "35")
                 ),
-                stop_on_failure=_env_bool("MASTER_BRAIN_DESKTOP_STOP_ON_FAILURE", "false"),
-                dynamic_risk_controls=_env_bool(
+                stop_on_failure=env_bool("MASTER_BRAIN_DESKTOP_STOP_ON_FAILURE", "false"),
+                dynamic_risk_controls=env_bool(
                     "MASTER_BRAIN_DESKTOP_DYNAMIC_RISK_CONTROLS", "false"
                 ),
-                enforce_quality_gate=_env_bool(
+                enforce_quality_gate=env_bool(
                     "MASTER_BRAIN_DESKTOP_ENFORCE_QUALITY_GATE", "false"
                 ),
             )

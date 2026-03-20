@@ -8,7 +8,7 @@ observe step (screenshot) can be used for vision-based decide/verify.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger("kan_core.desktop_action_loop")
 

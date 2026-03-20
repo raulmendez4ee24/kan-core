@@ -8,15 +8,12 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from brain.dispatcher import handle_telegram_event
+from config.env_helpers import env_bool
 from config.env_loader import load_environment
 from integrations.telegram_admin import ensure_telegram_mode, resolve_telegram_mode
 
 logger = logging.getLogger("kan_core.workers.telegram_polling")
 _POLLING_TASK: asyncio.Task | None = None
-
-
-def _env_bool(name: str, default: str = "false") -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes"}
 
 
 def _token() -> str:

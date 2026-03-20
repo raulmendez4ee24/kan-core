@@ -634,7 +634,62 @@ class OfferForge:
       </div>
       <p class="footer-note">Timeline: {html.escape(offer.offer.timeline)}. Garantía: {html.escape(offer.offer.guarantee)}</p>
     </section>
+
+    <section class="hero" id="capture-form" style="margin-top:24px;">
+      <h2>Solicita tu propuesta</h2>
+      <p class="lede">Déjanos tus datos y te contactamos en menos de 24 horas.</p>
+      <form id="leadForm" onsubmit="return submitLead(event)" style="display:grid;gap:12px;max-width:480px;">
+        <input type="text" name="name" placeholder="Tu nombre" required
+               style="padding:14px;border:1px solid rgba(15,23,42,0.15);border-radius:12px;font-size:16px;background:var(--bg);color:var(--text);">
+        <input type="email" name="email" placeholder="Tu email" required
+               style="padding:14px;border:1px solid rgba(15,23,42,0.15);border-radius:12px;font-size:16px;background:var(--bg);color:var(--text);">
+        <input type="tel" name="phone" placeholder="Tu WhatsApp"
+               style="padding:14px;border:1px solid rgba(15,23,42,0.15);border-radius:12px;font-size:16px;background:var(--bg);color:var(--text);">
+        <button type="submit" class="cta" style="cursor:pointer;border:0;font-size:16px;">Quiero mi propuesta</button>
+      </form>
+      <div id="formResult" style="display:none;margin-top:14px;padding:16px;border-radius:12px;font-weight:700;"></div>
+    </section>
   </main>
+  <script>
+  function submitLead(e) {{
+    e.preventDefault();
+    var form = document.getElementById('leadForm');
+    var result = document.getElementById('formResult');
+    var params = new URLSearchParams(window.location.search);
+    var body = {{
+      name: form.name.value,
+      email: form.email.value,
+      phone: form.phone.value || null,
+      source: 'landing',
+      utm_source: params.get('utm_source') || null,
+      utm_medium: params.get('utm_medium') || null,
+      utm_campaign: params.get('utm_campaign') || null,
+      utm_content: params.get('utm_content') || null,
+      offer_id: '{offer.offer_id}'
+    }};
+    var apiBase = params.get('api_base') || '';
+    fetch(apiBase + '/lead-capture/submit', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify(body)
+    }})
+    .then(function(r) {{ return r.json(); }})
+    .then(function(data) {{
+      form.style.display = 'none';
+      result.style.display = 'block';
+      result.style.background = 'var(--primary)';
+      result.style.color = 'white';
+      result.textContent = 'Recibido. Te contactamos pronto.';
+    }})
+    .catch(function() {{
+      result.style.display = 'block';
+      result.style.background = '#fb7185';
+      result.style.color = 'white';
+      result.textContent = 'Error al enviar. Intenta de nuevo.';
+    }});
+    return false;
+  }}
+  </script>
 </body>
 </html>
 """

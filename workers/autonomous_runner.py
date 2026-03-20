@@ -19,34 +19,13 @@ from brain.ai_coo_engine import run_ai_coo_cycle
 from brain.business_context_engine import run_business_context_cycle
 from brain.business_monitor import build_metrics_snapshot
 from brain.crm_engine import dispatch_due_followups
+from config.env_helpers import env_bool, env_float, env_int
 from database import AsyncSessionLocal
 from models import BusinessEvent, Client, ConversationLog, IntegrationRunLog, Objective, ObjectiveRun
 from routes.autonomy import implement_recommendation, run_autonomy_cycles
 from schemas.autonomy import CycleRunRequest, RecommendationImplementRequest
 
 logger = logging.getLogger("kan_core.workers.autonomous_runner")
-
-
-def _env_bool(name: str, default: str) -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes"}
-
-
-def _env_int(name: str, default: int, *, min_value: int, max_value: int) -> int:
-    raw = os.getenv(name, str(default)).strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        value = int(default)
-    return max(min_value, min(value, max_value))
-
-
-def _env_float(name: str, default: float, *, min_value: float, max_value: float) -> float:
-    raw = os.getenv(name, str(default)).strip()
-    try:
-        value = float(raw)
-    except ValueError:
-        value = float(default)
-    return max(min_value, min(value, max_value))
 
 
 def _parse_uuid_list(raw: str) -> List[UUID]:
@@ -164,46 +143,46 @@ class RunnerConfig:
     @staticmethod
     def from_env() -> "RunnerConfig":
         return RunnerConfig(
-            enabled=_env_bool("ENABLE_AUTONOMOUS_RUNNER", "false"),
-            tick_seconds=_env_int("AUTONOMOUS_RUNNER_TICK_SECONDS", 60, min_value=5, max_value=3600),
-            max_orgs_per_tick=_env_int("AUTONOMOUS_RUNNER_MAX_ORGS_PER_TICK", 50, min_value=1, max_value=500),
-            require_activity=_env_bool("AUTONOMOUS_RUNNER_REQUIRE_ACTIVITY", "true"),
-            include_active_clients=_env_bool("AUTONOMOUS_RUNNER_INCLUDE_ACTIVE_CLIENTS", "false"),
-            min_objective_interval_seconds=_env_int(
+            enabled=env_bool("ENABLE_AUTONOMOUS_RUNNER", "false"),
+            tick_seconds=env_int("AUTONOMOUS_RUNNER_TICK_SECONDS", 60, min_value=5, max_value=3600),
+            max_orgs_per_tick=env_int("AUTONOMOUS_RUNNER_MAX_ORGS_PER_TICK", 50, min_value=1, max_value=500),
+            require_activity=env_bool("AUTONOMOUS_RUNNER_REQUIRE_ACTIVITY", "true"),
+            include_active_clients=env_bool("AUTONOMOUS_RUNNER_INCLUDE_ACTIVE_CLIENTS", "false"),
+            min_objective_interval_seconds=env_int(
                 "AUTONOMOUS_RUNNER_MIN_OBJECTIVE_INTERVAL_SECONDS", 300, min_value=30, max_value=86400
             ),
-            bypass_min_interval_on_errors=_env_bool("AUTONOMOUS_RUNNER_BYPASS_MIN_INTERVAL_ON_ERRORS", "true"),
-            window_days=_env_int("AUTONOMOUS_RUNNER_WINDOW_DAYS", 30, min_value=1, max_value=180),
-            max_recommendations=_env_int("AUTONOMOUS_RUNNER_MAX_RECOMMENDATIONS", 5, min_value=1, max_value=20),
-            include_llm_summary=_env_bool("AUTONOMOUS_RUNNER_INCLUDE_LLM_SUMMARY", "true"),
-            implement_autonomous_objectives=_env_bool("AUTONOMOUS_RUNNER_IMPLEMENT_AUTONOMOUS_OBJECTIVES", "true"),
-            max_implement_per_objective=_env_int(
+            bypass_min_interval_on_errors=env_bool("AUTONOMOUS_RUNNER_BYPASS_MIN_INTERVAL_ON_ERRORS", "true"),
+            window_days=env_int("AUTONOMOUS_RUNNER_WINDOW_DAYS", 30, min_value=1, max_value=180),
+            max_recommendations=env_int("AUTONOMOUS_RUNNER_MAX_RECOMMENDATIONS", 5, min_value=1, max_value=20),
+            include_llm_summary=env_bool("AUTONOMOUS_RUNNER_INCLUDE_LLM_SUMMARY", "true"),
+            implement_autonomous_objectives=env_bool("AUTONOMOUS_RUNNER_IMPLEMENT_AUTONOMOUS_OBJECTIVES", "true"),
+            max_implement_per_objective=env_int(
                 "AUTONOMOUS_RUNNER_MAX_IMPLEMENT_PER_OBJECTIVE", 2, min_value=0, max_value=10
             ),
-            min_confidence_to_implement=_env_float(
+            min_confidence_to_implement=env_float(
                 "AUTONOMOUS_RUNNER_MIN_CONFIDENCE_TO_IMPLEMENT", 0.8, min_value=0.0, max_value=1.0
             ),
-            only_high_priority=_env_bool("AUTONOMOUS_RUNNER_ONLY_HIGH_PRIORITY", "true"),
-            force_implement=_env_bool("AUTONOMOUS_RUNNER_FORCE_IMPLEMENT", "false"),
-            confirm_sensitive=_env_bool("AUTONOMOUS_RUNNER_CONFIRM_SENSITIVE", "true"),
+            only_high_priority=env_bool("AUTONOMOUS_RUNNER_ONLY_HIGH_PRIORITY", "true"),
+            force_implement=env_bool("AUTONOMOUS_RUNNER_FORCE_IMPLEMENT", "false"),
+            confirm_sensitive=env_bool("AUTONOMOUS_RUNNER_CONFIRM_SENSITIVE", "true"),
             target_org_ids=_parse_uuid_list(os.getenv("AUTONOMOUS_RUNNER_TARGET_ORG_IDS", "")),
-            enable_business_context_reasoning=_env_bool("ENABLE_BUSINESS_CONTEXT_REASONING", "false"),
-            business_context_window_hours=_env_int(
+            enable_business_context_reasoning=env_bool("ENABLE_BUSINESS_CONTEXT_REASONING", "false"),
+            business_context_window_hours=env_int(
                 "BUSINESS_CONTEXT_WINDOW_HOURS", 24, min_value=1, max_value=24 * 14
             ),
-            business_context_min_prev_sales=_env_int("BUSINESS_CONTEXT_MIN_PREV_SALES", 3, min_value=0, max_value=9999),
-            business_context_sales_drop_threshold=_env_float(
+            business_context_min_prev_sales=env_int("BUSINESS_CONTEXT_MIN_PREV_SALES", 3, min_value=0, max_value=9999),
+            business_context_sales_drop_threshold=env_float(
                 "BUSINESS_CONTEXT_SALES_DROP_THRESHOLD", 0.3, min_value=0.05, max_value=0.95
             ),
-            business_context_create_recommendations=_env_bool("BUSINESS_CONTEXT_CREATE_RECOMMENDATIONS", "true"),
-            business_context_recommendation_cooldown_hours=_env_int(
+            business_context_create_recommendations=env_bool("BUSINESS_CONTEXT_CREATE_RECOMMENDATIONS", "true"),
+            business_context_recommendation_cooldown_hours=env_int(
                 "BUSINESS_CONTEXT_RECOMMENDATION_COOLDOWN_HOURS", 24, min_value=1, max_value=24 * 14
             ),
-            business_context_execute_campaigns=_env_bool("BUSINESS_CONTEXT_EXECUTE_CAMPAIGNS", "false"),
-            business_context_followups_max_jobs=_env_int(
+            business_context_execute_campaigns=env_bool("BUSINESS_CONTEXT_EXECUTE_CAMPAIGNS", "false"),
+            business_context_followups_max_jobs=env_int(
                 "BUSINESS_CONTEXT_FOLLOWUPS_MAX_JOBS", 30, min_value=1, max_value=200
             ),
-            business_context_followups_dry_run=_env_bool("BUSINESS_CONTEXT_FOLLOWUPS_DRY_RUN", "true"),
+            business_context_followups_dry_run=env_bool("BUSINESS_CONTEXT_FOLLOWUPS_DRY_RUN", "true"),
         )
 
 
@@ -364,7 +343,7 @@ class AutonomousRunner:
             metrics = snapshot.metrics or {}
 
             # Detect + notify: evaluate alerts if enabled.
-            if _env_bool("ENABLE_ADVANCED_ALERTS", "false"):
+            if env_bool("ENABLE_ADVANCED_ALERTS", "false"):
                 try:
                     await evaluate_alert_rules(session, organization_id=org_id, metrics=metrics)
                 except Exception:
@@ -400,14 +379,14 @@ class AutonomousRunner:
                 except Exception:
                     logger.exception("business_context_cycle_failed org=%s", org_id)
 
-            if _env_bool("ENABLE_AI_COO", "false"):
+            if env_bool("ENABLE_AI_COO", "false"):
                 try:
                     ai_res = await run_ai_coo_cycle(
                         session,
                         organization_id=org_id,
-                        window_hours=_env_int("AI_COO_WINDOW_HOURS", 24, min_value=1, max_value=24 * 14),
-                        dry_run=_env_bool("AI_COO_DRY_RUN", "true"),
-                        max_actions=_env_int("AI_COO_MAX_ACTIONS", 20, min_value=1, max_value=200),
+                        window_hours=env_int("AI_COO_WINDOW_HOURS", 24, min_value=1, max_value=24 * 14),
+                        dry_run=env_bool("AI_COO_DRY_RUN", "true"),
+                        max_actions=env_int("AI_COO_MAX_ACTIONS", 20, min_value=1, max_value=200),
                         execution_mode_override=os.getenv("AI_COO_FORCE_EXECUTION_MODE"),
                     )
                     plan_items = ai_res.get("action_plan") if isinstance(ai_res, dict) else []
@@ -420,9 +399,9 @@ class AutonomousRunner:
                 except Exception:
                     logger.exception("ai_coo_cycle_failed org=%s", org_id)
 
-            if _env_bool("ENABLE_FOLLOWUP_DISPATCHER", "false") and _env_bool("ENABLE_CRM_INTERNAL", "false"):
+            if env_bool("ENABLE_FOLLOWUP_DISPATCHER", "false") and env_bool("ENABLE_CRM_INTERNAL", "false"):
                 try:
-                    dispatch_limit = _env_int(
+                    dispatch_limit = env_int(
                         "FOLLOWUP_DISPATCHER_LIMIT", 50, min_value=1, max_value=500
                     )
                     await dispatch_due_followups(session, organization_id=org_id, limit=dispatch_limit)
@@ -552,7 +531,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _ensure_db_ready() -> None:
-    if _env_bool("AUTO_CREATE_DB", "false"):
+    if env_bool("AUTO_CREATE_DB", "false"):
         from database import init_db
 
         await init_db()

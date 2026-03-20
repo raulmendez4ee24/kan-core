@@ -11,6 +11,8 @@ import httpx
 
 from browser_agent.browser_controller import BrowserController
 
+from config.env_helpers import env_bool
+
 logger = logging.getLogger("kan_core.web_agent")
 
 _URL_RE = re.compile(r"(https?://[^\s)]+|www\.[^\s)]+)", re.IGNORECASE)
@@ -18,10 +20,6 @@ _DONE_ACTIONS = {"done", "finish", "stop"}
 _VISION_PROMPT = (
     "Describe briefly what is visible and what user should click/type next to complete the task."
 )
-
-
-def _env_bool(name: str, default: str = "false") -> bool:
-    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes"}
 
 
 def _truncate_text(value: str, limit: int) -> str:
@@ -159,12 +157,12 @@ class WebAgent:
         except Exception:
             domains = []
 
-        allow_all_domains = _env_bool("WEB_AGENT_ALLOW_ALL_DOMAINS", "true") or _env_bool(
+        allow_all_domains = env_bool("WEB_AGENT_ALLOW_ALL_DOMAINS", "true") or env_bool(
             "DESKTOP_AGENT_UNSAFE_ALLOW_ALL", "false"
         )
         return BrowserController(
-            enabled=_env_bool("DESKTOP_AGENT_BROWSER_ENABLED", "true"),
-            headless=_env_bool("DESKTOP_AGENT_BROWSER_HEADLESS", "false"),
+            enabled=env_bool("DESKTOP_AGENT_BROWSER_ENABLED", "true"),
+            headless=env_bool("DESKTOP_AGENT_BROWSER_HEADLESS", "false"),
             channel=str(os.getenv("DESKTOP_AGENT_BROWSER_CHANNEL") or "chromium").strip().lower(),
             user_data_dir=str(os.getenv("DESKTOP_AGENT_BROWSER_USER_DATA_DIR") or "").strip(),
             domain_allowlist=domains,
@@ -288,7 +286,7 @@ class WebAgent:
         interactive_elements = list(elements or []) if isinstance(elements, list) else []
 
         screenshot = {}
-        include_shot = _env_bool("WEB_AGENT_OBSERVE_SCREENSHOT", "false") or len(interactive_elements) <= 3
+        include_shot = env_bool("WEB_AGENT_OBSERVE_SCREENSHOT", "false") or len(interactive_elements) <= 3
         if include_shot:
             try:
                 screenshot = await self._browser.browser_screenshot(full_page=False)

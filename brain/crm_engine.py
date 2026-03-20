@@ -1,11 +1,9 @@
 import os
-import json
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from brain.data_mapper import auto_map_fields
@@ -16,29 +14,6 @@ from brain.predictor_sales import (
 )
 from models import CrmInteraction, CrmLead, FollowUpJob
 from tools.n8n_client import send_to_n8n_with_response
-
-# region agent log
-_DEBUG_LOG_PATH = "/Users/raulaldairmendezalvarez/Documents/chatbotn8n/.cursor/debug-383b70.log"
-
-
-def _dbg(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:
-    try:
-        os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
-        payload = {
-            "sessionId": "383b70",
-            "runId": "pre-fix",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        return
-
-# endregion
 
 
 def _to_tags(value: Any) -> List[str]:
@@ -92,41 +67,11 @@ async def upsert_lead(
     external_id_str = str(external_id) if external_id else None
     email = mapped.get("email")
     phone = mapped.get("phone")
-    model_cols: List[str] = []
-    table = getattr(CrmLead, "__table__", None)
-    if table is not None:
-        model_cols = [str(c.name) for c in table.columns]
-    _dbg(
-        "H1",
-        "brain/crm_engine.py:upsert_lead",
-        "CrmLead capability snapshot",
-        {
-            "has_attr_external_id": hasattr(CrmLead, "external_id"),
-            "has_col_external_id": "external_id" in model_cols,
-            "has_attr_entity_id": hasattr(CrmLead, "entity_id"),
-            "has_external_id_input": bool(external_id_str),
-            "has_email_input": bool(email),
-            "has_phone_input": bool(phone),
-            "mapped_keys": sorted(list(mapped.keys()))[:20],
-        },
-    )
 
     stmt = select(CrmLead).where(CrmLead.organization_id == organization_id)
     if external_id_str:
-        _dbg(
-            "H2",
-            "brain/crm_engine.py:upsert_lead",
-            "Branch external_id lookup",
-            {"external_id_len": len(external_id_str)},
-        )
         stmt = stmt.where(CrmLead.external_id == external_id_str)
     elif email or phone:
-        _dbg(
-            "H3",
-            "brain/crm_engine.py:upsert_lead",
-            "Branch email/phone lookup",
-            {"email": bool(email), "phone": bool(phone)},
-        )
         conditions = []
         if email:
             conditions.append(CrmLead.email == str(email))
@@ -140,12 +85,6 @@ async def upsert_lead(
     now = datetime.now(timezone.utc)
 
     if not lead:
-        _dbg(
-            "H4",
-            "brain/crm_engine.py:upsert_lead",
-            "Creating new CrmLead instance",
-            {"will_set_external_id_kwarg": True, "has_external_id_input": bool(external_id_str)},
-        )
         lead = CrmLead(
             organization_id=organization_id,
             external_id=external_id_str,

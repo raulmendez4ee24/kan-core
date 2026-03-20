@@ -35,6 +35,7 @@ class PaymentConnector:
         track_close: Optional[Callable[..., Awaitable[Any]]] = None,
         update_crm: Optional[Callable[..., Awaitable[None]]] = None,
         trigger_onboarding: Optional[Callable[..., Awaitable[None]]] = None,
+        set_converted_at: Optional[Callable[..., Awaitable[None]]] = None,
     ) -> None:
         self._sk = (stripe_secret_key or os.getenv("STRIPE_SECRET_KEY", "")).strip()
         self._wh_secret = (stripe_webhook_secret or os.getenv("STRIPE_WEBHOOK_SECRET", "")).strip()
@@ -42,6 +43,7 @@ class PaymentConnector:
         self._track_close = track_close or _default_track_close
         self._update_crm = update_crm or _default_update_crm
         self._trigger_onboarding = trigger_onboarding or _default_trigger_onboarding
+        self._set_converted_at = set_converted_at or _default_set_converted_at
 
     # ------------------------------------------------------------------
     # Signature verification
@@ -212,7 +214,14 @@ class PaymentConnector:
             logger.error("payment_connector: update_crm failed: %s", exc)
             result["update_crm_error"] = str(exc)
 
-        # 3. Trigger onboarding sequence
+        # 3. Set converted_at on CrmLead
+        try:
+            await self._set_converted_at(lead_id=lead_id)
+        except Exception as exc:
+            logger.error("payment_connector: set_converted_at failed: %s", exc)
+            result["set_converted_at_error"] = str(exc)
+
+        # 4. Trigger onboarding sequence
         try:
             await self._trigger_onboarding(lead_id=lead_id, product=product, amount=amount)
         except Exception as exc:
@@ -263,6 +272,32 @@ async def _default_update_crm(*, lead_id: str, status: str) -> None:
         )
     except Exception as exc:
         logger.warning("payment_connector: n8n CRM update failed: %s", exc)
+
+
+async def _default_set_converted_at(*, lead_id: str) -> None:
+    """Mark lead as converted in CRM by setting converted_at timestamp."""
+    logger.info("payment_connector: set_converted_at lead=%s", lead_id)
+    try:
+        from datetime import datetime, timezone
+
+        from sqlalchemy import or_, select
+
+        from database import AsyncSessionLocal
+        from models import CrmLead
+
+        async with AsyncSessionLocal() as session:
+            stmt = select(CrmLead).where(
+                or_(
+                    CrmLead.external_id == lead_id,
+                    CrmLead.id == lead_id,
+                )
+            )
+            lead = (await session.execute(stmt)).scalars().first()
+            if lead and lead.converted_at is None:
+                lead.converted_at = datetime.now(timezone.utc)
+                await session.commit()
+    except Exception as exc:
+        logger.warning("payment_connector: set_converted_at DB failed: %s", exc)
 
 
 async def _default_trigger_onboarding(*, lead_id: str, product: str, amount: float) -> None:
