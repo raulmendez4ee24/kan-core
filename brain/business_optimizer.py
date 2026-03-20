@@ -3,7 +3,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Sequence
+from typing import Any, List, Sequence
 from uuid import UUID
 
 from sqlalchemy import select

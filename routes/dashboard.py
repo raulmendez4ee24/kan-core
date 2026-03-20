@@ -4,7 +4,6 @@ import asyncio
 from calendar import monthrange
 from datetime import datetime, time, timedelta, timezone
 import html
-import json
 import os
 from pathlib import Path
 import secrets
@@ -274,9 +273,58 @@ async def _check_api_statuses() -> list[dict[str, str]]:
     return list(await asyncio.gather(*checks))
 
 
+async def _query_attribution_funnel() -> dict[str, Any]:
+    try:
+        from brain.attribution_engine import get_full_funnel, list_tracked_sources
+
+        sources = await list_tracked_sources(limit=10)
+        total_leads = sum(s["lead_count"] for s in sources)
+        total_spend = sum(s["total_spend"] for s in sources)
+        top_funnel = None
+        if sources:
+            funnel = await get_full_funnel(sources[0]["source_key"])
+            top_funnel = funnel.model_dump(mode="json")
+        return {
+            "total_sources": len(sources),
+            "total_leads": total_leads,
+            "total_spend": total_spend,
+            "top_funnel": top_funnel,
+            "sources": sources[:5],
+        }
+    except Exception:
+        return {}
+
+
+async def _query_instagram_analytics() -> dict[str, Any]:
+    try:
+        from brain.instagram_analytics import InstagramAnalytics
+
+        ig = InstagramAnalytics()
+        report = await ig.full_analysis()
+        return report.model_dump(mode="json")
+    except Exception:
+        return {}
+
+
+async def _query_meta_ads_diagnostic() -> dict[str, Any]:
+    try:
+        from brain.meta_ads_operator.client import MetaAdsApiClient
+        from brain.meta_ads_operator.engine import analyze_meta_ads_snapshot
+
+        client = MetaAdsApiClient()
+        snapshot = await client.fetch_snapshot()
+        report = analyze_meta_ads_snapshot(snapshot)
+        return report.model_dump(mode="json")
+    except Exception:
+        return {}
+
+
 async def collect_dashboard_data(request: Request) -> dict[str, Any]:
     mentor = BusinessMentor()
-    api_statuses, revenue_numbers, crm, outbound, instagram_posts, scheduler_jobs, briefing = await asyncio.gather(
+    (
+        api_statuses, revenue_numbers, crm, outbound, instagram_posts,
+        scheduler_jobs, briefing, attribution, ig_analytics, meta_ads,
+    ) = await asyncio.gather(
         _check_api_statuses(),
         _query_revenue(),
         mentor.collect_crm_metrics(),
@@ -284,6 +332,9 @@ async def collect_dashboard_data(request: Request) -> dict[str, Any]:
         _query_instagram_posts(),
         _query_scheduler_jobs(request),
         get_latest_briefing("daily"),
+        _query_attribution_funnel(),
+        _query_instagram_analytics(),
+        _query_meta_ads_diagnostic(),
     )
 
     monthly_goal = float(os.getenv("MONTHLY_REVENUE_TARGET_MXN") or 100000.0)
@@ -303,6 +354,9 @@ async def collect_dashboard_data(request: Request) -> dict[str, Any]:
         "instagram_posts": instagram_posts,
         "scheduler_jobs": scheduler_jobs,
         "daily_briefing": briefing.model_dump(mode="json") if briefing else None,
+        "attribution_funnel": attribution,
+        "ig_analytics": ig_analytics,
+        "meta_ads": meta_ads,
     }
 
 
@@ -342,6 +396,185 @@ def _render_daily_briefing(briefing: dict[str, Any] | None) -> str:
             + "</ul>"
         )
     return "".join(lines)
+
+
+def _render_attribution_section(attribution: dict[str, Any]) -> str:
+    if not attribution:
+        return ""
+    sources = list(attribution.get("sources") or [])
+    top_funnel = attribution.get("top_funnel") or {}
+    source_rows = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(str(item.get('source_key') or ''))}</td>
+          <td>{html.escape(str(item.get('channel') or ''))}</td>
+          <td>{int(item.get('lead_count') or 0)}</td>
+          <td>{_fmt_money(item.get('total_spend'))}</td>
+        </tr>
+        """
+        for item in sources
+    ) or "<tr><td colspan='4' class='empty'>No attribution data yet.</td></tr>"
+
+    funnel_html = ""
+    if top_funnel:
+        def _pct(val):
+            if val is None:
+                return "—"
+            return f"{val * 100:.1f}%"
+        funnel_html = f"""
+      <section class="card span-6">
+        <div class="title">Top Source Funnel</div>
+        <div class="metrics">
+          <div class="metric">
+            <span>Conversation Rate</span>
+            <strong>{_pct(top_funnel.get('conversation_rate'))}</strong>
+          </div>
+          <div class="metric">
+            <span>Booking Rate</span>
+            <strong>{_pct(top_funnel.get('booking_rate'))}</strong>
+          </div>
+          <div class="metric">
+            <span>Close Rate</span>
+            <strong>{_pct(top_funnel.get('close_rate'))}</strong>
+          </div>
+          <div class="metric">
+            <span>ROAS</span>
+            <strong>{top_funnel.get('roas') or '—'}</strong>
+          </div>
+        </div>
+        <div class="mini-grid" style="margin-top:14px;">
+          <div class="mini"><span>Leads</span><strong>{top_funnel.get('leads', 0)}</strong></div>
+          <div class="mini"><span>Conversations</span><strong>{top_funnel.get('conversations', 0)}</strong></div>
+          <div class="mini"><span>Bookings</span><strong>{top_funnel.get('bookings', 0)}</strong></div>
+          <div class="mini"><span>Closes</span><strong>{top_funnel.get('closes', 0)}</strong></div>
+          <div class="mini"><span>Revenue</span><strong>{_fmt_money(top_funnel.get('revenue'))}</strong></div>
+          <div class="mini"><span>Spend</span><strong>{_fmt_money(top_funnel.get('spend'))}</strong></div>
+        </div>
+      </section>"""
+
+    return f"""
+      <section class="card span-6">
+        <div class="title">Top Lead Sources</div>
+        <div class="metrics">
+          <div class="metric">
+            <span>Tracked Sources</span>
+            <strong>{int(attribution.get('total_sources') or 0)}</strong>
+          </div>
+          <div class="metric">
+            <span>Total Leads Captured</span>
+            <strong>{int(attribution.get('total_leads') or 0)}</strong>
+          </div>
+        </div>
+        <table style="margin-top:14px;">
+          <thead><tr><th>Source</th><th>Channel</th><th>Leads</th><th>Spend</th></tr></thead>
+          <tbody>{source_rows}</tbody>
+        </table>
+      </section>
+      {funnel_html}"""
+
+
+def _render_ig_analytics(ig: dict[str, Any]) -> str:
+    if not ig or not ig.get("account"):
+        return ""
+    account = ig.get("account") or {}
+    agg = ig.get("aggregate") or {}
+    issues = ig.get("issues") or []
+    posts = (ig.get("posts") or [])[:5]
+
+    severity_color = {"HIGH": "var(--red)", "MEDIUM": "var(--secondary)", "LOW": "var(--muted)"}
+
+    post_rows = "".join(
+        f"""<tr>
+          <td>{html.escape((p.get('post',{{}}).get('timestamp') or '')[:10])}</td>
+          <td>{int(p.get('insights',{{}}).get('reach') or 0)}</td>
+          <td>{int(p.get('post',{{}}).get('like_count') or 0)}</td>
+          <td>{int(p.get('insights',{{}}).get('saved') or 0)}</td>
+          <td>{int(p.get('insights',{{}}).get('shares') or 0)}</td>
+          <td>{p.get('insights',{{}}).get('engagement_rate', 0):.0f}%</td>
+        </tr>"""
+        for p in posts
+    ) or "<tr><td colspan='6' class='empty'>No posts yet.</td></tr>"
+
+    issue_items = "".join(
+        f"<li style='color:{severity_color.get(i.get('severity','LOW'), 'var(--muted)')}'>"
+        f"<strong>[{html.escape(i.get('severity',''))}]</strong> {html.escape(i.get('title',''))}: "
+        f"{html.escape(i.get('detail',''))}</li>"
+        for i in issues[:6]
+    ) or "<li class='empty'>No issues detected.</li>"
+
+    return f"""
+      <section class="card span-6">
+        <div class="title">Instagram Performance — @{html.escape(account.get('username',''))}</div>
+        <div class="metrics">
+          <div class="metric"><span>Followers</span><strong>{int(account.get('followers_count') or 0)}</strong></div>
+          <div class="metric"><span>Avg Reach/Post</span><strong>{agg.get('avg_reach_per_post', 0):.0f}</strong></div>
+          <div class="metric"><span>Avg ER</span><strong>{agg.get('avg_engagement_rate', 0):.1f}%</strong></div>
+          <div class="metric"><span>Posts</span><strong>{int(account.get('media_count') or 0)}</strong></div>
+        </div>
+        <table style="margin-top:14px;">
+          <thead><tr><th>Date</th><th>Reach</th><th>Likes</th><th>Saves</th><th>Shares</th><th>ER</th></tr></thead>
+          <tbody>{post_rows}</tbody>
+        </table>
+      </section>
+      <section class="card span-6">
+        <div class="title">Instagram Issues</div>
+        <ul style="padding-left:18px;">{issue_items}</ul>
+      </section>"""
+
+
+def _render_meta_ads(ads: dict[str, Any]) -> str:
+    if not ads:
+        return ""
+    entity_reports = ads.get("entity_reports") or []
+    findings = ads.get("account_findings") or []
+    actions = ads.get("account_actions") or []
+
+    severity_color = {"HIGH": "var(--red)", "MEDIUM": "var(--secondary)", "LOW": "var(--muted)"}
+
+    campaign_rows = ""
+    total_spend = 0.0
+    for er in entity_reports[:8]:
+        entity = er.get("entity") or {}
+        metrics = entity.get("metrics") or {}
+        name = html.escape(str(entity.get("name") or "")[:40])
+        status = html.escape(str(entity.get("status") or ""))
+        spend = float(metrics.get("spend") or 0)
+        ctr = float(metrics.get("link_ctr") or metrics.get("ctr") or 0)
+        roas = float(metrics.get("roas") or 0)
+        total_spend += spend
+        campaign_rows += f"""<tr>
+          <td>{name}</td>
+          <td>{status}</td>
+          <td>{_fmt_money(spend)}</td>
+          <td>{ctr:.2f}%</td>
+          <td>{roas:.2f}</td>
+        </tr>"""
+    if not campaign_rows:
+        campaign_rows = "<tr><td colspan='5' class='empty'>No campaigns found.</td></tr>"
+
+    finding_items = "".join(
+        f"<li style='color:{severity_color.get(f.get('severity','LOW'), 'var(--muted)')}'>"
+        f"<strong>[{html.escape(f.get('severity',''))}]</strong> {html.escape(f.get('title',''))}: "
+        f"{html.escape(f.get('explanation','')[:100])}</li>"
+        for f in findings[:6]
+    ) or "<li class='empty'>No findings.</li>"
+
+    return f"""
+      <section class="card span-6">
+        <div class="title">Meta Ads Campaigns</div>
+        <div class="metrics">
+          <div class="metric"><span>Campaigns</span><strong>{len(entity_reports)}</strong></div>
+          <div class="metric"><span>Total Spend</span><strong>{_fmt_money(total_spend)}</strong></div>
+        </div>
+        <table style="margin-top:14px;">
+          <thead><tr><th>Campaign</th><th>Status</th><th>Spend</th><th>CTR</th><th>ROAS</th></tr></thead>
+          <tbody>{campaign_rows}</tbody>
+        </table>
+      </section>
+      <section class="card span-6">
+        <div class="title">Meta Ads Findings</div>
+        <ul style="padding-left:18px;">{finding_items}</ul>
+      </section>"""
 
 
 def build_dashboard_html(data: dict[str, Any]) -> str:
@@ -549,6 +782,9 @@ def build_dashboard_html(data: dict[str, Any]) -> str:
         <div class="title">Last Daily Briefing</div>
         {_render_daily_briefing(data.get('daily_briefing'))}
       </section>
+      {_render_attribution_section(data.get('attribution_funnel'))}
+      {_render_ig_analytics(data.get('ig_analytics'))}
+      {_render_meta_ads(data.get('meta_ads'))}
     </div>
   </div>
 </body>

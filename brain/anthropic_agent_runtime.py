@@ -5,7 +5,6 @@ import os
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from brain.core import CognitiveEngine

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from config.env_helpers import env_bool
 from brain.attribution_engine import list_upcoming_bookings, save_briefing
 from brain.brand_director import BrandDirector
 from brain.business_mentor import BusinessMentor
@@ -18,10 +19,6 @@ from brain.revenue_brain import DailyBriefing, RevenueBrain
 
 logger = logging.getLogger("kan_core.revenue_scheduler")
 REVENUE_TZ = ZoneInfo("America/Mexico_City")
-
-
-def _env_bool(name: str, default: str = "true") -> bool:
-    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes"}
 
 
 class RevenueBrainScheduler:
@@ -93,6 +90,18 @@ class RevenueBrainScheduler:
             self.run_business_mentor_weekly_review,
             CronTrigger(day_of_week="sun", hour=10, minute=0, timezone=REVENUE_TZ),
             id="business-mentor-weekly-review",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.run_instagram_daily_snapshot,
+            CronTrigger(hour=7, minute=0, timezone=REVENUE_TZ),
+            id="instagram-daily-snapshot",
+            replace_existing=True,
+        )
+        self.scheduler.add_job(
+            self.run_meta_ads_daily_diagnostic,
+            CronTrigger(hour=8, minute=0, timezone=REVENUE_TZ),
+            id="meta-ads-daily-diagnostic",
             replace_existing=True,
         )
         self._configured = True
@@ -235,5 +244,42 @@ class RevenueBrainScheduler:
         return None
 
 
+    async def run_instagram_daily_snapshot(self) -> dict[str, object] | None:
+        async def _ig_snapshot():
+            from brain.instagram_analytics import InstagramAnalytics
+
+            ig = InstagramAnalytics()
+            report = await ig.full_analysis()
+            await ig.save_daily_snapshot(report)
+            high_issues = [i for i in report.issues if i.severity == "HIGH"]
+            if high_issues:
+                logger.warning(
+                    "Instagram: %d HIGH issues detected: %s",
+                    len(high_issues),
+                    ", ".join(i.code for i in high_issues),
+                )
+            return report
+
+        result = await self._run_with_logging("instagram_daily_snapshot", _ig_snapshot)
+        self._record_job_run("instagram-daily-snapshot")
+        if result is not None:
+            return result.model_dump(mode="json")
+        return None
+
+    async def run_meta_ads_daily_diagnostic(self) -> dict[str, object] | None:
+        async def _ads_diagnostic():
+            from brain.meta_ads_autonomy import MetaAdsAnalyzer
+
+            analyzer = MetaAdsAnalyzer()
+            report = await analyzer.daily_report()
+            return report
+
+        result = await self._run_with_logging("meta_ads_daily_diagnostic", _ads_diagnostic)
+        self._record_job_run("meta-ads-daily-diagnostic")
+        if result is not None:
+            return result.model_dump(mode="json")
+        return None
+
+
 def should_start_revenue_scheduler() -> bool:
-    return _env_bool("ENABLE_REVENUE_BRAIN_SCHEDULER", "true")
+    return env_bool("ENABLE_REVENUE_BRAIN_SCHEDULER", "true")

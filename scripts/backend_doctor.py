@@ -11,9 +11,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-
-def _env_bool(name: str, default: str = "false") -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes"}
+from config.env_helpers import env_bool
 
 
 def _present(name: str) -> str:
@@ -101,7 +99,7 @@ def _summarize_flags() -> Dict[str, Any]:
         "ENABLE_CONTENT_FACTORY",
         "ENABLE_INTERNAL_ASSISTANT",
     ]
-    return {k: _env_bool(k, "false") for k in keys}
+    return {k: env_bool(k, "false") for k in keys}
 
 
 def _check_full_auto_profile() -> Dict[str, Any]:

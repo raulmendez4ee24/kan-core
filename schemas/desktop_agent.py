@@ -111,12 +111,6 @@ class WsResultEnvelope(BaseModel):
     data: Dict[str, Any] = Field(default_factory=dict)
 
 
-class WsHeartbeatEnvelope(BaseModel):
-    type: Literal["heartbeat"] = "heartbeat"
-    agent_id: str
-    ts: str
-
-
 class WsAckEnvelope(BaseModel):
     type: Literal["ack"] = "ack"
     command_id: Optional[str] = None

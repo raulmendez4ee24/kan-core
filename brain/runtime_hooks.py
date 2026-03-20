@@ -5,7 +5,7 @@ import logging
 import os
 from uuid import UUID
 from collections import defaultdict
-from typing import Any, Awaitable, Callable, DefaultDict, Dict, List
+from typing import Any, Callable, DefaultDict, Dict, List
 
 from sqlalchemy import select
 

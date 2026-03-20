@@ -13,14 +13,11 @@ from integrations.telegram_admin import ensure_telegram_mode, resolve_telegram_m
 
 load_environment(context="main")
 
+from config.env_helpers import env_bool
 from database import close_db, init_db
 from observability import init_observability
 from brain.core import validate_runtime_environment
 from brain.revenue_scheduler import RevenueBrainScheduler, should_start_revenue_scheduler
-
-
-def _env_bool(name: str, default: str = "false") -> bool:
-    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes"}
 
 
 async def _maybe_run_db_migrations(logger: logging.Logger) -> None:
@@ -30,7 +27,7 @@ async def _maybe_run_db_migrations(logger: logging.Logger) -> None:
         or ("pytest" in sys.modules)
     ):
         return
-    if not _env_bool("RUN_DB_MIGRATIONS", "false"):
+    if not env_bool("RUN_DB_MIGRATIONS", "false"):
         return
     logger.info("RUN_DB_MIGRATIONS=true: applying Alembic migrations.")
     from tools.db_migrate import run_upgrade
@@ -56,7 +53,7 @@ async def _lifespan(_app: FastAPI):
         await init_db()
 
     # Evita choque webhook/polling antes de arrancar ngrok.
-    if resolved_telegram_mode in {"polling", "off"} and _env_bool(
+    if resolved_telegram_mode in {"polling", "off"} and env_bool(
         "ENABLE_NGROK_AUTO_REGISTER_TELEGRAM", "true"
     ):
         os.environ["ENABLE_NGROK_AUTO_REGISTER_TELEGRAM"] = "false"
@@ -96,7 +93,7 @@ async def _lifespan(_app: FastAPI):
         async def _wait_for_start_gate() -> None:
             await startup_gate.wait()
 
-        if _env_bool("ENABLE_JARVIS_LISTENER", "false"):
+        if env_bool("ENABLE_JARVIS_LISTENER", "false"):
             load_environment(
                 strict=True,
                 required_all=("JARVIS_CLIENT_ID",),
@@ -106,7 +103,7 @@ async def _lifespan(_app: FastAPI):
                 context="jarvis_listener",
                 require_client_id=True,
                 require_openai=False,
-                strict_client_id_format=_env_bool("STRICT_JARVIS_CLIENT_ID_FORMAT", "false"),
+                strict_client_id_format=env_bool("STRICT_JARVIS_CLIENT_ID_FORMAT", "false"),
                 fail_fast=True,
             )
             from jarvis_listener import JarvisListener
@@ -135,8 +132,8 @@ async def _lifespan(_app: FastAPI):
             validate_runtime_environment(
                 context="telegram_polling",
                 require_client_id=True,
-                require_openai=_env_bool("TELEGRAM_REQUIRE_OPENAI", "false"),
-                strict_client_id_format=_env_bool("STRICT_JARVIS_CLIENT_ID_FORMAT", "false"),
+                require_openai=env_bool("TELEGRAM_REQUIRE_OPENAI", "false"),
+                strict_client_id_format=env_bool("STRICT_JARVIS_CLIENT_ID_FORMAT", "false"),
                 fail_fast=True,
             )
             from workers.telegram_polling import start_polling_task
@@ -156,7 +153,7 @@ async def _lifespan(_app: FastAPI):
         else:
             logger.info("Telegram polling omitido (mode=%s)", resolved_telegram_mode)
 
-        if _env_bool("ENABLE_JARVIS_GUI", "false"):
+        if env_bool("ENABLE_JARVIS_GUI", "false"):
             gui_process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "jarvis_gui.py",
@@ -269,7 +266,7 @@ def _enforce_route_registry(fastapi_app: FastAPI) -> dict[tuple[str, str], list[
             path,
             ", ".join(endpoints),
         )
-    if _env_bool("STRICT_ROUTE_REGISTRY", "false"):
+    if env_bool("STRICT_ROUTE_REGISTRY", "false"):
         raise RuntimeError(
             "Duplicate routes detected and STRICT_ROUTE_REGISTRY=true."
         )

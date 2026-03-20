@@ -39,3 +39,9 @@ hunter_results.csv
 data/*.sqlite3
 data/*.db
 data/landings/
+
+# Next.js build output
+web/.next/
+
+# Editor / IDE artifacts
+.cursor/

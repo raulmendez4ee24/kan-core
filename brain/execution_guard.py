@@ -10,6 +10,8 @@ from collections import defaultdict, deque
 from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import UUID
 
+from config.env_helpers import env_float, env_int
+
 logger = logging.getLogger("kan_core.execution_guard")
 
 _RECENT_ACTIONS: Dict[str, Deque[float]] = defaultdict(deque)
@@ -31,20 +33,6 @@ _SPLITTABLE_LIST_KEYS = (
 
 def _env_flag(name: str, default: str = "true") -> bool:
     return os.getenv(name, default).lower() in {"1", "true", "yes"}
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return max(1, int(os.getenv(name, str(default))))
-    except (TypeError, ValueError):
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return max(0.0, float(os.getenv(name, str(default))))
-    except (TypeError, ValueError):
-        return default
 
 
 def _compact(value: Any) -> Any:
@@ -278,26 +266,26 @@ def _build_snapshot(
 def _limit_for(operation_type: str) -> Dict[str, float]:
     if operation_type == "delete":
         return {
-            "records": float(_env_int("AUTONOMY_DELETE_MAX_RECORDS", 25)),
-            "affected_clients": float(_env_int("AUTONOMY_DELETE_MAX_AFFECTED_CLIENTS", 10)),
+            "records": float(env_int("AUTONOMY_DELETE_MAX_RECORDS", 25, min_value=1)),
+            "affected_clients": float(env_int("AUTONOMY_DELETE_MAX_AFFECTED_CLIENTS", 10, min_value=1)),
         }
     if operation_type == "payment":
         return {
-            "amount_usd": float(_env_float("AUTONOMY_PAYMENT_MAX_AMOUNT_USD", 5000.0)),
-            "records": float(_env_int("AUTONOMY_PAYMENT_MAX_ITEMS_PER_BATCH", 10)),
+            "amount_usd": float(env_float("AUTONOMY_PAYMENT_MAX_AMOUNT_USD", 5000.0, min_value=0.0)),
+            "records": float(env_int("AUTONOMY_PAYMENT_MAX_ITEMS_PER_BATCH", 10, min_value=1)),
         }
     if operation_type == "external_api":
         return {
-            "records": float(_env_int("AUTONOMY_EXTERNAL_API_MAX_ITEMS_PER_BATCH", 50)),
-            "affected_clients": float(_env_int("AUTONOMY_EXTERNAL_API_MAX_AFFECTED_CLIENTS", 25)),
+            "records": float(env_int("AUTONOMY_EXTERNAL_API_MAX_ITEMS_PER_BATCH", 50, min_value=1)),
+            "affected_clients": float(env_int("AUTONOMY_EXTERNAL_API_MAX_AFFECTED_CLIENTS", 25, min_value=1)),
         }
     if operation_type == "messaging":
         return {
-            "records": float(_env_int("AUTONOMY_MESSAGING_MAX_RECIPIENTS", 100)),
+            "records": float(env_int("AUTONOMY_MESSAGING_MAX_RECIPIENTS", 100, min_value=1)),
         }
     return {
-        "records": float(_env_int("AUTONOMY_GENERIC_MAX_ITEMS_PER_BATCH", 50)),
-        "affected_clients": float(_env_int("AUTONOMY_GENERIC_MAX_AFFECTED_CLIENTS", 25)),
+        "records": float(env_int("AUTONOMY_GENERIC_MAX_ITEMS_PER_BATCH", 50, min_value=1)),
+        "affected_clients": float(env_int("AUTONOMY_GENERIC_MAX_AFFECTED_CLIENTS", 25, min_value=1)),
     }
 
 
@@ -348,15 +336,15 @@ def _chunk_payload(payload: Dict[str, Any], path: Sequence[str], items: Sequence
 
 
 def _loop_window_seconds() -> float:
-    return max(5.0, _env_float("AUTONOMY_RECENT_ACTION_WINDOW_SECONDS", 300.0))
+    return max(5.0, env_float("AUTONOMY_RECENT_ACTION_WINDOW_SECONDS", 300.0, min_value=0.0))
 
 
 def _loop_repeat_limit() -> int:
-    return max(2, _env_int("AUTONOMY_RECENT_ACTION_REPEAT_LIMIT", 3))
+    return max(2, env_int("AUTONOMY_RECENT_ACTION_REPEAT_LIMIT", 3, min_value=1))
 
 
 def _baseline_ratio() -> float:
-    return max(1.1, _env_float("AUTONOMY_OUTPUT_ANOMALY_RATIO", 3.0))
+    return max(1.1, env_float("AUTONOMY_OUTPUT_ANOMALY_RATIO", 3.0, min_value=0.0))
 
 
 def _trim_recent(signature: str, now: float) -> Deque[float]:

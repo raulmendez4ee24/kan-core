@@ -48,16 +48,9 @@ class LeadRead(BaseModel):
     score: float
     conversion_probability: float
     last_interaction_at: Optional[datetime] = None
+    converted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
-
-
-class InteractionCreateRequest(BaseModel):
-    lead_id: Optional[str] = None
-    channel: str = "chat"
-    direction: str = "inbound"
-    content: str = Field(..., min_length=1)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class InteractionRead(BaseModel):

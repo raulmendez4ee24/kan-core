@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple
 from uuid import UUID
 
 from sqlalchemy import desc, func, select

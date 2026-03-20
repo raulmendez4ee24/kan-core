@@ -18,10 +18,9 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal
-from models import BusinessEvent, IntegrationRunLog, RecommendationAction
+from models import BusinessEvent, IntegrationRunLog
 from observability import capture_exception
 
 logger = logging.getLogger("kan_core.goal_tracker")

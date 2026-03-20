@@ -53,6 +53,23 @@ async def list_opportunities(_: str = Depends(require_client_token)):
     }
 
 
+@router.get("/meta-ads/diagnostic")
+async def meta_ads_diagnostic(
+    _: str = Depends(require_client_token),
+):
+    """Run full Meta Ads diagnostic: campaigns, findings, recommended actions."""
+    try:
+        from brain.meta_ads_operator.client import MetaAdsApiClient
+        from brain.meta_ads_operator.engine import analyze_meta_ads_snapshot
+
+        client = MetaAdsApiClient()
+        snapshot = await client.fetch_snapshot()
+        report = analyze_meta_ads_snapshot(snapshot)
+        return report.model_dump(mode="json")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Meta Ads diagnostic failed: {exc}")
+
+
 @router.post("/meta-ads/approve/{action_id}")
 async def approve_meta_ads_action(
     action_id: str,

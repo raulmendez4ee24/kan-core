@@ -13,12 +13,9 @@ We verify before processing (Discord will deactivate endpoints that don't verify
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
 import os
-import time
 from typing import Any, Dict
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, Response
@@ -44,7 +41,6 @@ def _verify_discord_signature(
 
     try:
         from nacl.signing import VerifyKey  # type: ignore
-        from nacl.exceptions import BadSignatureError  # type: ignore
 
         vk = VerifyKey(bytes.fromhex(public_key_hex))
         vk.verify((timestamp + raw_body.decode()).encode(), bytes.fromhex(signature))

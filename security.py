@@ -71,6 +71,31 @@ async def validate_client_credentials(
     return str(client.id)
 
 
+def default_client_id() -> str:
+    """Resolve default client ID from env vars. Used by routes with optional X-Client-Id."""
+    for env_name in ("KAN_CLIENT_ID", "CLIENT_ID", "YCLOUD_DEFAULT_CLIENT_ID"):
+        value = str(os.getenv(env_name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+async def require_client_token_with_fallback(
+    x_client_token: str = Header(..., alias="X-Client-Token"),
+    x_client_id: str | None = Header(default=None, alias="X-Client-Id"),
+    session: AsyncSession = Depends(get_session),
+) -> str:
+    """Like require_client_token but falls back to env-based client ID when header is missing."""
+    client_id = str(x_client_id or "").strip() or default_client_id()
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Missing client id")
+    return await validate_client_credentials(
+        session,
+        x_client_id=client_id,
+        x_client_token=x_client_token,
+    )
+
+
 def verify_meta_signature(raw_body: bytes, header_signature: Optional[str]) -> bool:
     require_signatures = os.getenv("REQUIRE_WEBHOOK_SIGNATURES", "true").lower() in {
         "1",

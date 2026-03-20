@@ -180,9 +180,87 @@ class ContentPublisher:
         # TODO: TikTok API publishing requires business verification and app review.
         raise NotImplementedError("TikTok publishing is not enabled yet")
 
+    # ------------------------------------------------------------------
+    # Cadence & duplicate guards
+    # ------------------------------------------------------------------
+
+    def _max_posts_per_day(self) -> int:
+        try:
+            return max(1, int(os.getenv("MAX_INSTAGRAM_POSTS_PER_DAY", "2")))
+        except (TypeError, ValueError):
+            return 2
+
+    async def _posts_on_date(self, target_date: str) -> int:
+        """Count scheduled + published posts for a given date (YYYY-MM-DD)."""
+        async with aiosqlite.connect(self.db_path) as conn:
+            cursor = await conn.execute(
+                """
+                SELECT COUNT(*) FROM scheduled_posts
+                WHERE status IN ('scheduled', 'published')
+                  AND publish_at LIKE ?
+                """,
+                (f"{target_date}%",),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return int(row[0]) if row else 0
+
+    async def _caption_exists_on_date(self, post_id: str, caption: str, target_date: str) -> bool:
+        """Check if a different post with the same caption already exists for the date."""
+        prefix = (caption or "")[:60].strip()
+        if not prefix:
+            return False
+        async with aiosqlite.connect(self.db_path) as conn:
+            cursor = await conn.execute(
+                """
+                SELECT COUNT(*) FROM scheduled_posts
+                WHERE status IN ('scheduled', 'published')
+                  AND publish_at LIKE ?
+                  AND SUBSTR(json_extract(post_json, '$.caption'), 1, 60) = ?
+                  AND json_extract(post_json, '$.post_id') != ?
+                """,
+                (f"{target_date}%", prefix, post_id),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        return bool(row and int(row[0]) > 0)
+
     async def schedule_post(self, post: ContentPost, publish_at: datetime) -> ScheduledPostRecord:
         await self.initialize()
         timestamp = publish_at.astimezone(timezone.utc)
+        target_date = timestamp.strftime("%Y-%m-%d")
+
+        # Cadence guard: max posts per day
+        day_count = await self._posts_on_date(target_date)
+        if day_count >= self._max_posts_per_day():
+            logger.warning(
+                "content_publisher: cadence limit reached (%d/%d) for %s, skipping %s",
+                day_count, self._max_posts_per_day(), target_date, post.post_id,
+            )
+            return ScheduledPostRecord(
+                schedule_id=_schedule_id(post, timestamp),
+                post=post,
+                publish_at=timestamp.isoformat(),
+                status="skipped_cadence",
+                created_at=_utc_now().isoformat(),
+                updated_at=_utc_now().isoformat(),
+            )
+
+        # Duplicate guard: same caption prefix from a different post
+        if await self._caption_exists_on_date(post.post_id, post.caption, target_date):
+            logger.warning(
+                "content_publisher: duplicate caption detected for %s on %s, skipping",
+                post.post_id, target_date,
+            )
+            return ScheduledPostRecord(
+                schedule_id=_schedule_id(post, timestamp),
+                post=post,
+                publish_at=timestamp.isoformat(),
+                status="skipped_duplicate",
+                created_at=_utc_now().isoformat(),
+                updated_at=_utc_now().isoformat(),
+            )
+
         record = ScheduledPostRecord(
             schedule_id=_schedule_id(post, timestamp),
             post=post,
@@ -266,15 +344,43 @@ class ContentPublisher:
             await cursor.close()
 
             published: list[ScheduledPostRecord] = []
+            published_today = 0
+            today_str = _utc_now().strftime("%Y-%m-%d")
+            max_per_day = self._max_posts_per_day()
+
+            # Count only already-published posts today (not scheduled ones in the queue)
+            count_cursor = await conn.execute(
+                "SELECT COUNT(*) FROM scheduled_posts WHERE status = 'published' AND publish_at LIKE ?",
+                (f"{today_str}%",),
+            )
+            count_row = await count_cursor.fetchone()
+            already_published_today = int(count_row[0]) if count_row else 0
+            await count_cursor.close()
+
             for row in rows:
                 schedule_id = str(row[0])
                 post = ContentPost.model_validate(json.loads(str(row[1])))
                 created_at = str(row[6])
+
+                # Cadence guard at publish time
+                if already_published_today + published_today >= max_per_day:
+                    from datetime import timedelta
+                    tomorrow = (_utc_now() + timedelta(days=1)).replace(
+                        hour=14, minute=0, second=0, microsecond=0,
+                    )
+                    await conn.execute(
+                        "UPDATE scheduled_posts SET publish_at = ?, updated_at = ? WHERE schedule_id = ?",
+                        (tomorrow.isoformat(), _utc_now().isoformat(), schedule_id),
+                    )
+                    logger.info("content_publisher: postponed %s to %s (cadence limit)", schedule_id, tomorrow.isoformat())
+                    continue
+
                 current_status = "published"
                 media_id: str | None = None
                 error: str | None = None
                 try:
                     media_id = await self.publish_instagram(post)
+                    published_today += 1
                 except Exception as exc:
                     current_status = "failed"
                     error = str(exc)

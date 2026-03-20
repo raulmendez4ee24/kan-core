@@ -49,6 +49,7 @@ def _to_lead_read(row) -> LeadRead:
         score=float(row.score or 0.0),
         conversion_probability=float(row.conversion_probability or 0.0),
         last_interaction_at=row.last_interaction_at,
+        converted_at=getattr(row, "converted_at", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

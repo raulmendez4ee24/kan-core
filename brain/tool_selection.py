@@ -19,11 +19,9 @@ from models import (
 )
 
 
+from config.env_helpers import env_bool
+
 _INTEGRATION_SUCCESS_STATUSES = {"integrated", "saved_without_workflow", "already_covered"}
-
-
-def _env_bool(name: str, default: str) -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes"}
 
 
 def _clamp01(value: float) -> float:
@@ -113,7 +111,7 @@ async def build_tool_selection_snapshot(
     """
     since = datetime.now(timezone.utc) - timedelta(days=max(1, int(window_days)))
 
-    desktop_feature_on = _env_bool("ENABLE_DESKTOP_AGENT", "false")
+    desktop_feature_on = env_bool("ENABLE_DESKTOP_AGENT", "false")
     desktop_allowlist = _browser_allowlist()
     api_available = _n8n_available()
 

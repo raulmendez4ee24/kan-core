@@ -13,12 +13,10 @@ from brain.predictor import generate_lead_predictions
 from models import BusinessEvent, ConversationLog, IntegrationRunLog, Recommendation
 
 
+from config.env_helpers import env_bool
+
 _INTEGRATION_SUCCESS_STATUSES = {"integrated", "saved_without_workflow", "already_covered"}
 _INTEGRATION_FAILED_STATUSES = {"failed", "manual_action_required"}
-
-
-def _env_bool(name: str, default: str) -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes"}
 
 
 def _clamp01(value: float) -> float:
@@ -520,7 +518,7 @@ async def run_business_context_cycle(
         )
 
     campaign_result: Dict[str, Any] = {"executed": False, "detail": {}}
-    if execute_campaigns and insights and _env_bool("ENABLE_CRM_INTERNAL", "true"):
+    if execute_campaigns and insights and env_bool("ENABLE_CRM_INTERNAL", "true"):
         has_sales_drop = any(str(item.get("key")) == "sales_drop" for item in insights)
         if has_sales_drop:
             # Update lead probabilities before followups.

@@ -775,6 +775,35 @@ async def get_channel_roi(channel: str) -> RoiSummary:
     )
 
 
+async def list_tracked_sources(*, limit: int = 200) -> list[dict[str, Any]]:
+    """List all tracked lead sources grouped by source_key and channel."""
+    safe_limit = max(1, min(int(limit or 200), 1000))
+    async with _connect() as conn:
+        rows = await _fetchall(
+            conn,
+            """
+            SELECT source_key, channel,
+                   COUNT(*) AS lead_count,
+                   COALESCE(SUM(spend), 0) AS total_spend
+            FROM lead_sources
+            WHERE source_key IS NOT NULL AND source_key != ''
+            GROUP BY source_key, channel
+            ORDER BY lead_count DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        )
+    return [
+        {
+            "source_key": str(row["source_key"]),
+            "channel": str(row["channel"]),
+            "lead_count": int(row["lead_count"] or 0),
+            "total_spend": float(row["total_spend"] or 0.0),
+        }
+        for row in rows
+    ]
+
+
 async def save_briefing(
     *,
     briefing_type: str,

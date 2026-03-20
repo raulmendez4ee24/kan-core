@@ -24,7 +24,7 @@ def _post(*, post_format: str, media_url: str) -> ContentPost:
         hook="Hook",
         full_script="Script",
         visual_direction="Visual",
-        caption="Caption",
+        caption=f"Caption for {post_format}",
         hashtags=["#demo"],
         best_posting_time="09:00",
         cta="CTA",
@@ -72,7 +72,7 @@ def test_publish_instagram_handles_image_reel_and_story(monkeypatch, tmp_path: P
 
     assert image_creation[1] == "17890000000000000/media"
     assert image_creation[2]["image_url"] == "https://cdn.example.com/image.jpg"
-    assert image_creation[2]["caption"] == "Caption"
+    assert image_creation[2]["caption"] == "Caption for static"
     assert image_status[0] == "GET"
     assert image_status[1] == "creation-1"
     assert image_publish[1] == "17890000000000000/media_publish"

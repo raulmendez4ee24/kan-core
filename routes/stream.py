@@ -22,7 +22,7 @@ from collections import defaultdict
 from typing import AsyncGenerator
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 

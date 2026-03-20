@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections import Counter
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
