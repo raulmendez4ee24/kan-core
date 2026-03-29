@@ -4,6 +4,23 @@ Version: 0.1.0
 Summary: K'an core runtime
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn>=0.27
+Requires-Dist: sqlalchemy[asyncio]>=2.0
+Requires-Dist: greenlet>=3.0
+Requires-Dist: asyncpg>=0.29
+Requires-Dist: alembic>=1.13
+Requires-Dist: pydantic>=2.6
+Requires-Dist: httpx>=0.27
+Requires-Dist: cryptography>=42.0
+Requires-Dist: sentry-sdk>=2.0
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: aiosqlite>=0.20
+Requires-Dist: apscheduler>=3.10
+Requires-Dist: pytrends>=4.9
+Requires-Dist: google-genai>=1.0
+Requires-Dist: Pillow>=10.0
+Requires-Dist: tenacity<10,>=8.2
 
 # K'an Core
 
@@ -22,3 +39,24 @@ Install in editable mode so imports like `brain.*` work as a package:
 ```bash
 pip install -e .
 ```
+
+## Local Runner (Telegram -> Cloud -> Tu Mac)
+
+Cloud (Railway) orquesta y el runner local ejecuta desktop/browser en tu Mac.
+
+```bash
+export RUNNER_MODE=remote
+export WS_URL="wss://<tu-dominio-railway>/desktop-agent/ws"
+export CLIENT_ID="<tu-client-id-uuid>"
+export RUNNER_TOKEN="<token-runner>"
+python -m runner.local_runner
+```
+
+Permisos macOS requeridos para el proceso local:
+- `Accessibility`
+- `Screen Recording`
+
+## n8n Client
+
+- `tools.n8n_client.send_to_n8n()` fue retirado.
+- Usa `tools.n8n_client.send_to_n8n_with_response()`, que expone `dispatched`, `pending`, `confirmed` y `execution_status`.
