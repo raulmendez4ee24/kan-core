@@ -20,7 +20,7 @@ Este modo conecta WhatsApp Web por QR y reenvia mensajes a `KAN /chat/message`.
 
 ## Arranque
 ```bash
-cd ~/Documents/chatbotn8n
+cd ~/Documents/kan-core
 kan wa up
 ```
 

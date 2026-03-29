@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LABEL="com.chatbotn8n.fullauto"
+LABEL="com.kan-core.fullauto"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAUNCH_AGENTS_DIR="${HOME}/Library/LaunchAgents"
-SUPPORT_DIR="${HOME}/Library/Application Support/chatbotn8n"
+SUPPORT_DIR="${HOME}/Library/Application Support/kan-core"
 LAUNCHER_PATH="${SUPPORT_DIR}/full_auto_boot.sh"
 PLIST_PATH="${LAUNCH_AGENTS_DIR}/${LABEL}.plist"
 RUN_LOG="${ROOT_DIR}/.run/full_auto/launchagent.out.log"

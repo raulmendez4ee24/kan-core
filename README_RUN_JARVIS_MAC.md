@@ -39,7 +39,7 @@ En la Mac donde quieres que se ejecuten las acciones:
 
 ```bash
 # Clona el repo (si aún no lo tienes) y entra al directorio
-cd /ruta/al/chatbotn8n
+cd /ruta/al/kan-core
 
 # Crea un venv y dependencias (incluye websockets, etc.)
 python -m venv .venv

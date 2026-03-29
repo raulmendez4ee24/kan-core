@@ -27,7 +27,7 @@ No hace falta instalar nada en tu Mac. Usa una base de datos en la nube gratis.
 Luego ejecuta las migraciones (una vez) y Tu Autonomía:
 
 ```bash
-cd /Users/raulaldairmendezalvarez/Documents/chatbotn8n
+cd /Users/raulaldairmendezalvarez/Documents/kan-core
 alembic upgrade head
 python3 scripts/run_autonomy.py --personal
 ```

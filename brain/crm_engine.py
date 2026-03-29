@@ -18,7 +18,7 @@ from models import CrmInteraction, CrmLead, FollowUpJob
 from tools.n8n_client import send_to_n8n_with_response
 
 # region agent log
-_DEBUG_LOG_PATH = "/Users/raulaldairmendezalvarez/Documents/chatbotn8n/.cursor/debug-383b70.log"
+_DEBUG_LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".cursor", "debug-383b70.log")
 
 
 def _dbg(hypothesis_id: str, location: str, message: str, data: Dict[str, Any]) -> None:

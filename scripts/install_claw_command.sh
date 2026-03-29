@@ -16,7 +16,7 @@ if [[ -f "${SHELL_RC}" ]]; then
   if ! grep -Fq "${PATH_LINE}" "${SHELL_RC}"; then
     {
       echo ""
-      echo "# Added by chatbotn8n claw installer"
+      echo "# Added by kan-core claw installer"
       echo "${PATH_LINE}"
     } >> "${SHELL_RC}"
   fi
