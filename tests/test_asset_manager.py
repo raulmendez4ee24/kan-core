@@ -6,8 +6,12 @@ from pathlib import Path
 
 from brain.asset_manager import (
     AssetManager,
+    DallEProvider,
+    FORMAT_ASPECT_RATIOS,
+    FORMAT_DIMENSIONS,
     ProviderRouter,
     READY_PROMPTS,
+    STYLE_PRESETS,
     build_image_prompt,
     _select_creative_direction,
 )
@@ -143,15 +147,18 @@ def test_post_processing_uses_expected_order_and_strengths() -> None:
     vignette_index = source.index("vig_strength =")
 
     assert color_index < contrast_index < brightness_index < grain_index < vignette_index
-    assert "enhance(0.88)" in source
-    assert "enhance(1.15)" in source
-    assert "enhance(0.87)" in source
-    assert "* 0.19" in source
+    # Default profile values are used when style_preset="default"
+    manager = AssetManager()
+    default_profile = manager._get_post_processing_profile("default")
+    assert default_profile["saturation"] == 0.88
+    assert default_profile["contrast"] == 1.15
+    assert default_profile["brightness"] == 0.87
+    assert default_profile["vignette"] == 0.19
 
 
 def test_generate_post_image_runs_post_processing_before_overlay() -> None:
     source = inspect.getsource(AssetManager.generate_post_image)
-    post_index = source.index("self._apply_post_processing(output)")
+    post_index = source.index("self._apply_post_processing(output")
     overlay_index = source.index("self._overlay_text_and_wordmark(")
     assert post_index < overlay_index
 
@@ -307,8 +314,10 @@ def test_get_ready_prompt_raises_for_unknown_key() -> None:
 
 
 def test_ready_prompts_contains_expected_common_post_types() -> None:
-    assert len(READY_PROMPTS) == 12
-    for key in ["lead_capture", "offer_launch", "testimonial", "workflow_upgrade", "whatsapp_conversion"]:
+    assert len(READY_PROMPTS) == 22
+    for key in ["lead_capture", "offer_launch", "testimonial", "workflow_upgrade", "whatsapp_conversion",
+                "product_showcase", "pain_point", "social_proof_stats", "urgency_scarcity",
+                "behind_the_scenes", "event_announcement"]:
         assert key in READY_PROMPTS
 
 
@@ -335,3 +344,92 @@ def test_strip_emojis_removes_problematic_characters() -> None:
     manager = AssetManager()
     cleaned = manager._strip_emojis("Test de publicación automática 🤖🔥✅")
     assert cleaned == "Test de publicación automática"
+
+
+def test_format_dimensions_contains_all_formats() -> None:
+    for fmt in ["square", "story", "reel", "landscape", "carousel", "cover"]:
+        assert fmt in FORMAT_DIMENSIONS
+        w, h = FORMAT_DIMENSIONS[fmt]
+        assert w > 0 and h > 0
+
+
+def test_format_aspect_ratios_match_dimensions() -> None:
+    assert FORMAT_ASPECT_RATIOS["square"] == "1:1"
+    assert FORMAT_ASPECT_RATIOS["story"] == "9:16"
+    assert FORMAT_ASPECT_RATIOS["reel"] == "9:16"
+    assert FORMAT_ASPECT_RATIOS["landscape"] == "16:9"
+
+
+def test_build_image_prompt_uses_format_dimensions() -> None:
+    prompt_story = build_image_prompt(
+        topic="Test", hook_text="Hook",
+        style_preset="premium", format="story",
+    )
+    assert "1080x1920" in prompt_story
+
+    prompt_landscape = build_image_prompt(
+        topic="Test", hook_text="Hook",
+        style_preset="premium", format="landscape",
+    )
+    assert "1920x1080" in prompt_landscape
+
+
+def test_provider_router_selects_dalle_for_new_verticals() -> None:
+    router = ProviderRouter()
+    assert router.select_provider_name("gym") == "dalle"
+    assert router.select_provider_name("beauty") == "dalle"
+    assert router.select_provider_name("ecommerce") == "dalle"
+    assert router.select_provider_name("education") == "dalle"
+    assert router.select_provider_name("professional_services") == "dalle"
+
+
+def test_provider_router_fallback_chain_returns_all_providers() -> None:
+    router = ProviderRouter()
+    chain = router.fallback_chain("premium")
+    assert chain[0] == "gemini"
+    assert len(chain) == 3
+    assert set(chain) == {"gemini", "flux", "dalle"}
+
+    chain_flux = router.fallback_chain("glassmorphism_dark")
+    assert chain_flux[0] == "flux"
+    assert len(chain_flux) == 3
+
+
+def test_style_presets_include_new_verticals() -> None:
+    for vertical in ["gym", "beauty", "ecommerce", "education", "professional_services"]:
+        assert vertical in STYLE_PRESETS
+        preset = STYLE_PRESETS[vertical]
+        assert "mood" in preset
+        assert "scene" in preset
+        assert "composition" in preset
+        assert "palette_hint" in preset
+        assert "objects" in preset
+
+
+def test_post_processing_is_style_aware() -> None:
+    manager = AssetManager()
+    default_p = manager._get_post_processing_profile("default")
+    editorial_p = manager._get_post_processing_profile("editorial")
+    beauty_p = manager._get_post_processing_profile("beauty")
+
+    # Editorial should be more desaturated and contrasty than default
+    assert editorial_p["saturation"] < default_p["saturation"]
+    assert editorial_p["contrast"] > default_p["contrast"]
+    # Beauty should be less grainy and vignetted
+    assert beauty_p["grain"] < default_p["grain"]
+    assert beauty_p["vignette"] < default_p["vignette"]
+
+
+def test_resolve_vertical_aliases() -> None:
+    manager = AssetManager()
+    assert manager._resolve_vertical("fitness") == "gym"
+    assert manager._resolve_vertical("gimnasio") == "gym"
+    assert manager._resolve_vertical("salon") == "beauty"
+    assert manager._resolve_vertical("tienda") == "ecommerce"
+    assert manager._resolve_vertical("escuela") == "education"
+    assert manager._resolve_vertical("consulting") == "professional_services"
+
+
+def test_dalle_provider_class_exists() -> None:
+    provider = DallEProvider()
+    assert hasattr(provider, "generate")

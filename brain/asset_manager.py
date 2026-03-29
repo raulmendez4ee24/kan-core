@@ -25,6 +25,53 @@ _TEXT = "#f0f0f5"
 _MUTED = "#b8bfd6"
 _DEFAULT_GEMINI_IMAGE_MODEL = "models/gemini-3-pro-image-preview"
 _DEFAULT_FAL_MODEL = "fal-ai/flux-pro/v1.1"
+_DEFAULT_OPENAI_IMAGE_MODEL = "dall-e-3"
+
+# ─── Aspect ratio mappings per format ────────────────────────────────────────
+FORMAT_DIMENSIONS: dict[str, tuple[int, int]] = {
+    "square": (1080, 1080),
+    "static": (1080, 1080),
+    "story": (1080, 1920),
+    "reel": (1080, 1920),
+    "landscape": (1920, 1080),
+    "carousel": (1080, 1350),
+    "cover": (1584, 396),
+}
+
+FORMAT_ASPECT_RATIOS: dict[str, str] = {
+    "square": "1:1",
+    "static": "1:1",
+    "story": "9:16",
+    "reel": "9:16",
+    "landscape": "16:9",
+    "carousel": "4:5",
+    "cover": "4:1",
+}
+
+# fal.ai uses specific size names
+_FAL_SIZE_MAP: dict[str, str] = {
+    "square": "square_hd",
+    "static": "square_hd",
+    "story": "portrait_16_9",
+    "reel": "portrait_16_9",
+    "landscape": "landscape_16_9",
+    "carousel": "portrait_4_3",
+    "cover": "landscape_16_9",
+}
+
+# DALL-E 3 supported sizes
+_DALLE_SIZE_MAP: dict[str, str] = {
+    "square": "1024x1024",
+    "static": "1024x1024",
+    "story": "1024x1792",
+    "reel": "1024x1792",
+    "landscape": "1792x1024",
+    "carousel": "1024x1792",
+    "cover": "1792x1024",
+}
+
+_MAX_PROVIDER_RETRIES = 2
+_RETRY_BACKOFF_SECONDS = [2, 5]
 _SORA_BOLD_URLS = (
     "https://github.com/google/fonts/raw/main/ofl/sora/static/Sora-Bold.ttf",
     "https://github.com/google/fonts/raw/main/ofl/sora/Sora%5Bwght%5D.ttf",
@@ -225,6 +272,61 @@ STYLE_PRESETS: dict[str, dict[str, Any]] = {
         "palette_hint": "matte black, warm orange controls, subtle off-white legends, no CGI sheen",
         "objects": ["premium hardware device", "orange knobs", "tactile buttons"],
     },
+    "gym": {
+        "mood": "raw power, disciplined energy, premium athletic authority",
+        "scene": (
+            "Premium gym interior shot during golden hour. Heavy equipment with matte black finishes, "
+            "rubber flooring, and controlled dramatic lighting from skylights. "
+            "Empty station ready for peak performance. Real photography."
+        ),
+        "composition": "dynamic diagonal framing with strong depth and clean left space for overlay",
+        "palette_hint": "matte black, deep charcoal, restrained red-orange accent on one element only",
+        "objects": ["weight rack", "gym floor", "premium equipment", "dramatic shadow"],
+    },
+    "beauty": {
+        "mood": "luxurious serenity, feminine power, editorial beauty",
+        "scene": (
+            "Close-up beauty editorial setting with soft diffused lighting. "
+            "Premium skincare or beauty products arranged on marble surface. "
+            "Soft reflections, controlled bokeh, magazine-quality product photography."
+        ),
+        "composition": "intimate macro-style crop with elegant negative space and soft gradient backdrop",
+        "palette_hint": "soft rose, warm nude tones, dark base with one delicate pink accent",
+        "objects": ["beauty product", "marble surface", "soft fabric", "ambient glow"],
+    },
+    "ecommerce": {
+        "mood": "conversion-ready, trust-building, commercial clarity",
+        "scene": (
+            "Clean product photography on dark surface. Single hero product with controlled studio lighting. "
+            "Professional e-commerce aesthetic with premium dark background. "
+            "Subtle gradient and reflection on surface. Real product photo."
+        ),
+        "composition": "centered product hero with generous clean margins and subtle surface reflection",
+        "palette_hint": "dark navy base, controlled warm-white key light, product colors as only accents",
+        "objects": ["hero product", "reflective surface", "controlled highlight"],
+    },
+    "education": {
+        "mood": "credible expertise, structured growth, accessible authority",
+        "scene": (
+            "Modern learning environment with premium notebook, quality pen, and tablet on dark wood desk. "
+            "Controlled warm side lighting creating study atmosphere. "
+            "Organized workspace communicating disciplined knowledge. Real photography."
+        ),
+        "composition": "overhead or 30-degree desk shot with organized elements and reading space on the left",
+        "palette_hint": "dark wood, warm amber light, deep navy, subtle green accent for growth",
+        "objects": ["notebook", "quality pen", "tablet", "warm desk lamp"],
+    },
+    "professional_services": {
+        "mood": "executive confidence, strategic depth, consulting authority",
+        "scene": (
+            "Premium office detail shot — leather portfolio, fountain pen, business card on dark desk. "
+            "Dramatic side lighting from floor-to-ceiling window. "
+            "Executive environment communicating serious business. Real photography."
+        ),
+        "composition": "tight detail crop with architectural depth and clean left negative space",
+        "palette_hint": "dark mahogany, black leather, warm gold accent, deep navy shadows",
+        "objects": ["leather portfolio", "fountain pen", "architectural detail", "window light"],
+    },
 }
 
 READY_PROMPTS: dict[str, str] = {
@@ -240,6 +342,16 @@ READY_PROMPTS: dict[str, str] = {
     "brand_authority": "Create a founder-brand visual that feels experienced, strategic, and commercially sharp.",
     "workflow_upgrade": "Show operational chaos transformed into a clean automated workflow.",
     "whatsapp_conversion": "Depict WhatsApp as a serious sales channel with immediate response and booked meetings.",
+    "product_showcase": "Highlight a single hero product or service with premium studio-quality presentation.",
+    "pain_point": "Visualize the specific frustration the audience experiences daily before discovering the solution.",
+    "social_proof_stats": "Present impressive numbers or metrics in a clean, credible data-visualization style.",
+    "urgency_scarcity": "Create time-sensitive visual tension that drives immediate action without feeling desperate.",
+    "competitor_contrast": "Subtly position the brand as the premium alternative without naming competitors.",
+    "onboarding_welcome": "Show a warm, professional first-contact moment that makes new clients feel valued.",
+    "reactivation": "Re-engage dormant clients with a visual that combines familiarity with a fresh offer.",
+    "behind_the_scenes": "Reveal authentic operational moments that build trust and humanize the brand.",
+    "faq_visual": "Address the top objection or question visually with clarity and commercial confidence.",
+    "event_announcement": "Create anticipation for a launch, webinar, or live event with premium energy.",
 }
 
 VERTICAL_ACCENT_MAP: dict[str, tuple[str, str]] = {
@@ -253,6 +365,9 @@ VERTICAL_ACCENT_MAP: dict[str, tuple[str, str]] = {
     "beauty": ("rose accent", "#f472b6"),
     "spa": ("rose accent", "#f472b6"),
     "spas": ("rose accent", "#f472b6"),
+    "ecommerce": ("electric blue accent", "#3b82f6"),
+    "education": ("emerald accent", "#10b981"),
+    "professional_services": ("gold accent", "#d4af37"),
 }
 
 CREATIVE_DIRECTOR: list[dict[str, Any]] = [
@@ -420,6 +535,16 @@ _STYLE_ANTI_AI_MAP: dict[str, list[str]] = {
     "swiss_futurism": ["photography_real", "lighting_natural", "color_grading", "composition_editorial"],
     "neural_dark": ["photography_real", "lighting_natural", "color_grading", "composition_editorial", "dark_mode_tech"],
     "tactile_interface": ["photography_real", "lighting_natural", "color_grading", "texture_real"],
+    "gym":                ["photography_real", "lighting_natural", "color_grading", "texture_real",
+                           "composition_editorial"],
+    "beauty":             ["photography_real", "lighting_natural", "color_grading", "texture_real",
+                           "composition_editorial"],
+    "ecommerce":          ["photography_real", "lighting_natural", "color_grading", "texture_real",
+                           "composition_editorial", "dark_mode_tech"],
+    "education":          ["photography_real", "lighting_natural", "color_grading", "texture_real",
+                           "composition_editorial"],
+    "professional_services": ["photography_real", "lighting_natural", "color_grading", "texture_real",
+                              "composition_editorial"],
 }
 
 
@@ -451,12 +576,15 @@ class GeminiProvider:
         api_key: str,
         model: str,
         prompt: str,
+        aspect_ratio: str = "1:1",
     ) -> bytes:
         if not api_key:
             raise RuntimeError("GOOGLE_API_KEY is required for Gemini image generation")
-        return await asyncio.to_thread(self._generate_sync, api_key=api_key, model=model, prompt=prompt)
+        return await asyncio.to_thread(
+            self._generate_sync, api_key=api_key, model=model, prompt=prompt, aspect_ratio=aspect_ratio,
+        )
 
-    def _generate_sync(self, *, api_key: str, model: str, prompt: str) -> bytes:
+    def _generate_sync(self, *, api_key: str, model: str, prompt: str, aspect_ratio: str = "1:1") -> bytes:
         from google import genai
         from google.genai import types
 
@@ -468,7 +596,7 @@ class GeminiProvider:
                 prompt=prompt,
                 config=types.GenerateImagesConfig(
                     number_of_images=1,
-                    aspect_ratio="1:1",
+                    aspect_ratio=aspect_ratio,
                     output_mime_type="image/jpeg",
                     image_size="1K",
                 ),
@@ -505,6 +633,7 @@ class FluxProvider:
         api_key: str,
         model: str,
         prompt: str,
+        image_size: str = "square_hd",
     ) -> bytes:
         if not api_key:
             raise RuntimeError("FAL_API_KEY is required for Flux image generation")
@@ -516,7 +645,7 @@ class FluxProvider:
         }
         payload = {
             "prompt": prompt,
-            "image_size": "square_hd",
+            "image_size": image_size,
             "output_format": "jpeg",
         }
         run_url = f"https://fal.run/{model}"
@@ -539,6 +668,49 @@ class FluxProvider:
             return image_resp.content
 
 
+class DallEProvider:
+    async def generate(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        prompt: str,
+        size: str = "1024x1024",
+        quality: str = "hd",
+    ) -> bytes:
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for DALL-E image generation")
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "size": size,
+            "quality": quality,
+            "response_format": "b64_json",
+        }
+        import base64 as b64module
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/images/generations",
+                headers=headers,
+                json=payload,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            data_list = result.get("data") or []
+            if not data_list:
+                raise RuntimeError("DALL-E returned no image data")
+            b64_data = data_list[0].get("b64_json") or ""
+            if not b64_data:
+                raise RuntimeError("DALL-E returned empty b64_json")
+            return b64module.b64decode(b64_data)
+
+
 class ProviderRouter:
     FLUX_STYLES = {
         "glassmorphism_dark",
@@ -554,14 +726,30 @@ class ProviderRouter:
         "human",
         "documentary",
     }
+    DALLE_STYLES = {
+        "gym",
+        "beauty",
+        "ecommerce",
+        "education",
+        "professional_services",
+    }
 
     def select_provider_name(self, style_preset: str) -> str:
         style_key = str(style_preset or "").strip().lower().replace(" ", "_")
         if style_key in self.FLUX_STYLES:
             return "flux"
+        if style_key in self.DALLE_STYLES:
+            return "dalle"
         if style_key in self.GEMINI_STYLES:
             return "gemini"
         return "gemini"
+
+    def fallback_chain(self, style_preset: str) -> list[str]:
+        """Return ordered list of providers to try for the given style."""
+        primary = self.select_provider_name(style_preset)
+        all_providers = ["gemini", "flux", "dalle"]
+        chain = [primary] + [p for p in all_providers if p != primary]
+        return chain
 
 
 def build_image_prompt(
@@ -600,8 +788,9 @@ def build_image_prompt(
         if include_logo
         else "Do not reserve space for any logo."
     )
+    dims = FORMAT_DIMENSIONS.get(format, FORMAT_DIMENSIONS["square"])
     prompt = (
-        f"Create a professional 1080x1080 social media image for {BRAND['name']}. "
+        f"Create a professional {dims[0]}x{dims[1]} social media image for {BRAND['name']}. "
         f"Brand positioning: {BRAND['positioning']}. "
         f"Topic: {topic}. "
         f"Core hook theme: {hook_text}. "
@@ -660,11 +849,13 @@ class AssetManager:
         requester: RequestFn | None = None,
         gemini_provider: "GeminiProvider | None" = None,
         flux_provider: "FluxProvider | None" = None,
+        dalle_provider: "DallEProvider | None" = None,
         provider_router: "ProviderRouter | None" = None,
     ) -> None:
         self.requester = requester
         self.gemini_provider = gemini_provider or GeminiProvider()
         self.flux_provider = flux_provider or FluxProvider()
+        self.dalle_provider = dalle_provider or DallEProvider()
         self.provider_router = provider_router or ProviderRouter()
 
     def _cloud_name(self) -> str:
@@ -687,6 +878,12 @@ class AssetManager:
 
     def _fal_model(self) -> str:
         return str(os.getenv("FAL_MODEL") or _DEFAULT_FAL_MODEL).strip()
+
+    def _openai_api_key(self) -> str:
+        return str(os.getenv("OPENAI_API_KEY") or "").strip()
+
+    def _dalle_model(self) -> str:
+        return str(os.getenv("DALLE_MODEL") or _DEFAULT_OPENAI_IMAGE_MODEL).strip()
 
     def get_ready_prompt(self, key: str) -> str:
         ready = READY_PROMPTS.get(str(key).strip())
@@ -769,6 +966,17 @@ class AssetManager:
             "restaurant": "restaurants",
             "spa": "spas",
             "barber": "barbershops",
+            "fitness": "gym",
+            "gimnasio": "gym",
+            "salon": "beauty",
+            "belleza": "beauty",
+            "tienda": "ecommerce",
+            "shop": "ecommerce",
+            "escuela": "education",
+            "academia": "education",
+            "consulting": "professional_services",
+            "consultoria": "professional_services",
+            "despacho": "professional_services",
         }
         normalized = aliases.get(raw, raw)
         return normalized if normalized in STYLE_PRESETS else "default"
@@ -866,12 +1074,17 @@ class AssetManager:
                 continue
         return ImageFont.load_default()
 
-    def _render_with_pillow(self, output: Path) -> None:
-        image = Image.new("RGB", (1080, 1080), color=_BACKGROUND)
+    def _render_with_pillow(self, output: Path, format: str = "square") -> None:
+        dims = FORMAT_DIMENSIONS.get(format, FORMAT_DIMENSIONS["square"])
+        image = Image.new("RGB", dims, color=_BACKGROUND)
         draw = ImageDraw.Draw(image)
-
-        draw.rounded_rectangle((80, 80, 1000, 1000), radius=36, outline=_ACCENT, width=8)
-        draw.rectangle((120, 120, 220, 220), fill=_ACCENT)
+        w, h = dims
+        margin = int(min(w, h) * 0.074)
+        draw.rounded_rectangle(
+            (margin, margin, w - margin, h - margin),
+            radius=36, outline=_ACCENT, width=8,
+        )
+        draw.rectangle((margin + 40, margin + 40, margin + 140, margin + 140), fill=_ACCENT)
 
         output.parent.mkdir(parents=True, exist_ok=True)
         image.save(output, format="JPEG", quality=92, optimize=True)
@@ -1039,16 +1252,28 @@ class AssetManager:
         vertical: str | None,
         include_logo: bool,
         image_path: Path,
+        format: str = "square",
     ) -> None:
         cleaned_hook = self._strip_emojis(hook_text)
         image = Image.open(image_path).convert("RGB")
         draw = ImageDraw.Draw(image)
         width, height = image.size
-        padding = 60
+        fmt = str(format or "square").strip().lower()
+        # Adapt layout for tall formats (story/reel) vs wide (landscape)
+        if fmt in ("story", "reel"):
+            padding = 50
+            text_area_width = int(width * 0.85)
+            text_area_height = int(height * 0.25)
+        elif fmt == "landscape":
+            padding = 70
+            text_area_width = int(width * 0.50)
+            text_area_height = int(height * 0.50)
+        else:
+            padding = 60
+            text_area_width = int(width * 0.65)
+            text_area_height = int(height * 0.42)
         letter_spacing = 0.5
         accent_color = _resolve_vertical_accent(vertical)[1]
-        text_area_width = int(width * 0.65)
-        text_area_height = int(height * 0.42)
         hook_lines, title_font, line_spacing, hook_bbox = self._fit_hook_text(
             draw=draw,
             hook_text=cleaned_hook,
@@ -1125,44 +1350,63 @@ class AssetManager:
             draw.text((text_x, text_y), wordmark, fill="#8888a0", font=brand_font)
         image.save(image_path, format="JPEG", quality=92, optimize=True)
 
-    def _apply_post_processing(self, image_path: Path) -> None:
+    # Style-aware post-processing profiles
+    _POST_PROCESSING_PROFILES: dict[str, dict[str, float]] = {
+        "default":      {"saturation": 0.88, "contrast": 1.15, "brightness": 0.87, "grain": 0.06, "vignette": 0.19},
+        "editorial":    {"saturation": 0.82, "contrast": 1.20, "brightness": 0.85, "grain": 0.08, "vignette": 0.22},
+        "documentary":  {"saturation": 0.80, "contrast": 1.18, "brightness": 0.84, "grain": 0.09, "vignette": 0.20},
+        "human":        {"saturation": 0.85, "contrast": 1.12, "brightness": 0.88, "grain": 0.07, "vignette": 0.16},
+        "beauty":       {"saturation": 0.92, "contrast": 1.08, "brightness": 0.90, "grain": 0.03, "vignette": 0.12},
+        "gym":          {"saturation": 0.85, "contrast": 1.22, "brightness": 0.83, "grain": 0.07, "vignette": 0.24},
+        "ecommerce":    {"saturation": 0.90, "contrast": 1.10, "brightness": 0.89, "grain": 0.04, "vignette": 0.14},
+        "education":    {"saturation": 0.90, "contrast": 1.12, "brightness": 0.88, "grain": 0.05, "vignette": 0.15},
+        "glassmorphism_dark": {"saturation": 0.85, "contrast": 1.18, "brightness": 0.82, "grain": 0.05, "vignette": 0.22},
+        "terminal_luxury":    {"saturation": 0.83, "contrast": 1.20, "brightness": 0.80, "grain": 0.06, "vignette": 0.25},
+    }
+
+    def _get_post_processing_profile(self, style_preset: str) -> dict[str, float]:
+        key = str(style_preset or "").strip().lower().replace(" ", "_")
+        return self._POST_PROCESSING_PROFILES.get(key, self._POST_PROCESSING_PROFILES["default"])
+
+    def _apply_post_processing(self, image_path: Path, style_preset: str = "default") -> None:
         """
-        Film-photography post-processing that kills the "AI look":
-          1. Desaturate to 88% (AI models over-saturate)
-          2. Boost contrast to 1.15 (stronger shadow/highlight separation)
-          3. Darken overall brightness to 87%
-          4. Film grain (6% monochromatic noise, stronger on midtones)
-          5. Pronounced vignette around 18-20% (natural lens falloff)
+        Film-photography post-processing that kills the "AI look".
+        Parameters adapt per style_preset for optimal results:
+          1. Desaturate (AI models over-saturate)
+          2. Boost contrast (stronger shadow/highlight separation)
+          3. Darken overall brightness
+          4. Film grain (monochromatic noise, stronger on midtones)
+          5. Pronounced vignette (natural lens falloff)
         """
+        profile = self._get_post_processing_profile(style_preset)
         img = Image.open(image_path).convert("RGB")
 
-        # 1. Desaturate 12%
-        img = ImageEnhance.Color(img).enhance(0.88)
+        # 1. Desaturate
+        img = ImageEnhance.Color(img).enhance(profile["saturation"])
 
-        # 2. Contrast +15%
-        img = ImageEnhance.Contrast(img).enhance(1.15)
+        # 2. Contrast
+        img = ImageEnhance.Contrast(img).enhance(profile["contrast"])
 
-        # 3. Darken overall image by 13%
-        img = ImageEnhance.Brightness(img).enhance(0.87)
+        # 3. Darken
+        img = ImageEnhance.Brightness(img).enhance(profile["brightness"])
 
         # 4. Film grain — more visible on midtones, less on shadows/highlights
         arr = np.array(img, dtype=np.float32)
         lum = arr.mean(axis=2, keepdims=True) / 255.0
         grain_mask = 1.0 - np.abs(lum - 0.5) * 2.0
         grain_mask = np.clip(grain_mask, 0.3, 1.0)
-        noise = np.random.normal(0, 0.06 * 255, (img.height, img.width, 1))
+        noise = np.random.normal(0, profile["grain"] * 255, (img.height, img.width, 1))
         noise = np.repeat(noise, 3, axis=2)
         arr = np.clip(arr + noise * grain_mask, 0, 255).astype(np.uint8)
         img = Image.fromarray(arr)
 
-        # 5. Vignette — stronger radial gradient darkening toward corners
+        # 5. Vignette — radial gradient darkening toward corners
         width, height = img.size
         cx, cy = width / 2.0, height / 2.0
         max_dist = np.sqrt(cx**2 + cy**2)
         ys, xs = np.mgrid[0:height, 0:width]
         dist = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2) / max_dist
-        # Stronger falloff: affects outer ~45% of the frame with ~19% darkening
-        vig_strength = np.clip((dist - 0.55) / 0.45, 0.0, 1.0) ** 2 * 0.19
+        vig_strength = np.clip((dist - 0.55) / 0.45, 0.0, 1.0) ** 2 * profile["vignette"]
         vig_alpha = np.clip((1.0 - vig_strength) * 255, 0, 255).astype(np.uint8)
         vignette = Image.fromarray(vig_alpha, mode="L")
         dark = Image.new("RGB", (width, height), (0, 0, 0))
@@ -1191,10 +1435,12 @@ class AssetManager:
             content_type=content_type,
             include_logo=include_logo,
         )
+        aspect_ratio = FORMAT_ASPECT_RATIOS.get(format, "1:1")
         image_bytes = await self.gemini_provider.generate(
             api_key=self._google_api_key(),
             model=self._gemini_image_model(),
             prompt=prompt,
+            aspect_ratio=aspect_ratio,
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(image_bytes)
@@ -1221,14 +1467,87 @@ class AssetManager:
             content_type=content_type,
             include_logo=include_logo,
         )
+        fal_size = _FAL_SIZE_MAP.get(format, "square_hd")
         image_bytes = await self.flux_provider.generate(
             api_key=self._fal_api_key(),
             model=self._fal_model(),
             prompt=prompt,
+            image_size=fal_size,
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(image_bytes)
         return output
+
+    async def _generate_with_dalle(
+        self,
+        *,
+        topic: str,
+        hook_text: str,
+        style_preset: str,
+        format: str,
+        vertical: str | None,
+        content_type: str,
+        include_logo: bool,
+        output: Path,
+    ) -> Path:
+        prompt = self._build_gemini_prompt(
+            topic=topic,
+            hook_text=hook_text,
+            style_preset=style_preset,
+            format=format,
+            vertical=vertical,
+            content_type=content_type,
+            include_logo=include_logo,
+        )
+        dalle_size = _DALLE_SIZE_MAP.get(format, "1024x1024")
+        image_bytes = await self.dalle_provider.generate(
+            api_key=self._openai_api_key(),
+            model=self._dalle_model(),
+            prompt=prompt,
+            size=dalle_size,
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(image_bytes)
+        return output
+
+    async def _call_provider_with_retry(
+        self,
+        provider_name: str,
+        *,
+        topic: str,
+        hook_text: str,
+        style_preset: str,
+        format: str,
+        vertical: str | None,
+        content_type: str,
+        include_logo: bool,
+        output: Path,
+    ) -> Path:
+        generators = {
+            "gemini": self._generate_with_gemini,
+            "flux": self._generate_with_flux,
+            "dalle": self._generate_with_dalle,
+        }
+        gen_fn = generators.get(provider_name, self._generate_with_gemini)
+        kwargs = dict(
+            topic=topic, hook_text=hook_text, style_preset=style_preset,
+            format=format, vertical=vertical, content_type=content_type,
+            include_logo=include_logo, output=output,
+        )
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_PROVIDER_RETRIES + 1):
+            try:
+                return await gen_fn(**kwargs)
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _MAX_PROVIDER_RETRIES:
+                    wait = _RETRY_BACKOFF_SECONDS[attempt] if attempt < len(_RETRY_BACKOFF_SECONDS) else 5
+                    logger.warning(
+                        "%s generation attempt %d failed for %s — retry in %ds: %s",
+                        provider_name, attempt + 1, output.stem, wait, exc,
+                    )
+                    await asyncio.sleep(wait)
+        raise last_exc  # type: ignore[misc]
 
     async def _generate_background(
         self,
@@ -1242,31 +1561,26 @@ class AssetManager:
         include_logo: bool,
         output: Path,
     ) -> Path:
-        provider_name = self.provider_router.select_provider_name(style_preset)
-        if provider_name == "flux":
-            try:
-                return await self._generate_with_flux(
-                    topic=topic,
-                    hook_text=hook_text,
-                    style_preset=style_preset,
-                    format=format,
-                    vertical=vertical,
-                    content_type=content_type,
-                    include_logo=include_logo,
-                    output=output,
-                )
-            except Exception:
-                logger.exception("Flux generation failed for %s; falling back to Gemini", output.stem)
-        return await self._generate_with_gemini(
-            topic=topic,
-            hook_text=hook_text,
-            style_preset=style_preset,
-            format=format,
-            vertical=vertical,
-            content_type=content_type,
-            include_logo=include_logo,
-            output=output,
+        chain = self.provider_router.fallback_chain(style_preset)
+        kwargs = dict(
+            topic=topic, hook_text=hook_text, style_preset=style_preset,
+            format=format, vertical=vertical, content_type=content_type,
+            include_logo=include_logo, output=output,
         )
+        for i, provider_name in enumerate(chain):
+            try:
+                return await self._call_provider_with_retry(provider_name, **kwargs)
+            except Exception:
+                if i < len(chain) - 1:
+                    logger.exception(
+                        "%s generation failed for %s; falling back to %s",
+                        provider_name, output.stem, chain[i + 1],
+                    )
+                else:
+                    logger.exception(
+                        "All providers failed for %s; last was %s", output.stem, provider_name,
+                    )
+                    raise
 
     async def generate_post_image(
         self,
@@ -1293,13 +1607,13 @@ class AssetManager:
                 include_logo=include_logo,
                 output=output,
             )
-            logger.info("Generated post image with Gemini at %s", output)
+            logger.info("Generated post image at %s", output)
         except Exception:
-            logger.exception("Gemini image generation failed for %s; falling back to Pillow", output_id)
+            logger.exception("All providers failed for %s; falling back to Pillow", output_id)
             self._render_with_pillow(output)
             logger.info("Generated post image with Pillow fallback at %s", output)
         try:
-            self._apply_post_processing(output)
+            self._apply_post_processing(output, style_preset=style_preset)
         except Exception:
             logger.exception("Post-processing failed for %s; skipping", output_id)
         try:
@@ -1308,12 +1622,13 @@ class AssetManager:
                 vertical=vertical,
                 include_logo=include_logo,
                 image_path=output,
+                format=format,
             )
         except Exception:
             logger.exception("Image overlay failed for %s; rebuilding with Pillow background", output_id)
             self._render_with_pillow(output)
             try:
-                self._apply_post_processing(output)
+                self._apply_post_processing(output, style_preset=style_preset)
             except Exception:
                 logger.exception("Post-processing failed during overlay recovery for %s; skipping", output_id)
             self._overlay_text_and_wordmark(
@@ -1321,6 +1636,7 @@ class AssetManager:
                 vertical=vertical,
                 include_logo=include_logo,
                 image_path=output,
+                format=format,
             )
         return await self.upload_image(str(output))
 
@@ -1364,11 +1680,11 @@ class AssetManager:
                 output=output,
             )
         except Exception:
-            logger.exception("Gemini generation failed for QC pipeline; falling back to Pillow")
+            logger.exception("All providers failed for QC pipeline; falling back to Pillow")
             self._render_with_pillow(output)
 
         try:
-            self._apply_post_processing(output)
+            self._apply_post_processing(output, style_preset=style_preset)
         except Exception:
             logger.exception("Post-processing failed in QC pipeline; skipping")
 
@@ -1378,12 +1694,13 @@ class AssetManager:
                 vertical=vertical,
                 include_logo=include_logo,
                 image_path=output,
+                format=format,
             )
         except Exception:
             logger.exception("Overlay failed in QC pipeline; rebuilding with Pillow")
             self._render_with_pillow(output)
             try:
-                self._apply_post_processing(output)
+                self._apply_post_processing(output, style_preset=style_preset)
             except Exception:
                 logger.exception("Post-processing failed in QC pipeline recovery; skipping")
             self._overlay_text_and_wordmark(
@@ -1391,6 +1708,7 @@ class AssetManager:
                 vertical=vertical,
                 include_logo=include_logo,
                 image_path=output,
+                format=format,
             )
 
         return ImageResult(image=output.read_bytes(), prompt_used=effective_topic, asset_id=output_id)
